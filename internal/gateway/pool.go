@@ -29,20 +29,24 @@ type proxyTransport struct {
 	client   *http.Client
 	healthy  atomic.Bool
 	checking atomic.Bool
+	active   *atomic.Int64
 }
 
 type transportPool struct {
-	items []*proxyTransport
+	items    []*proxyTransport
+	strategy string
 }
 
 // anonymousPool gives the shared OpenCode "public" credential an independent
 // cooldown per proxy. Unlike key nodes, anonymous nodes are never rebound:
 // changing proxy is the failover mechanism because Zen rate-limits them by IP.
 type anonymousPool struct {
+	sessions *sessionScheduler
 	nodes    []*anonymousNode
 	next     atomic.Uint64
 	cooldown time.Duration
 	hasPool  bool
+	strategy string
 }
 
 type anonymousNode struct {
@@ -52,17 +56,19 @@ type anonymousNode struct {
 }
 
 type anonymousCursor struct {
-	pool   *anonymousPool
-	start  int
-	offset int
-	used   []bool
+	session string
+	pool    *anonymousPool
+	start   int
+	offset  int
+	used    []bool
 }
 
 func newAnonymousPool(enabled bool, transports *transportPool, cooldown time.Duration) *anonymousPool {
-	pool := &anonymousPool{cooldown: cooldown}
+	pool := &anonymousPool{cooldown: cooldown, sessions: newSessionScheduler()}
 	if !enabled || transports == nil {
 		return pool
 	}
+	pool.strategy = transports.strategy
 	pool.nodes = make([]*anonymousNode, 0, len(transports.items))
 	for _, proxy := range transports.items {
 		if proxy.pool {
@@ -88,14 +94,13 @@ func (p *anonymousPool) CursorFor(affinity string) anonymousCursor {
 	if p == nil || len(p.nodes) == 0 {
 		return anonymousCursor{pool: p}
 	}
-	start := 0
-	if affinity == "" {
-		start = int((p.next.Add(1) - 1) % uint64(len(p.nodes)))
-	} else {
-		hash := fnv.New64a()
-		_, _ = hash.Write([]byte(affinity))
-		start = int(hash.Sum64() % uint64(len(p.nodes)))
+	if p.strategy == "sticky_round_robin" && affinity != "" {
+		return anonymousCursor{pool: p, start: p.sessions.choose(affinity, p.sessionRoutes()), session: affinity}
 	}
+	start := scheduleStart(p.strategy, affinity, len(p.nodes), &p.next, func(i int) (*proxyTransport, bool) {
+		node := p.nodes[i]
+		return node.proxy, node.proxy.pool || node.cooldownUntil.Load() <= time.Now().UnixNano()
+	})
 	return anonymousCursor{pool: p, start: start}
 }
 
@@ -114,6 +119,22 @@ func (c *anonymousCursor) Next() *anonymousNode {
 	if c.used == nil {
 		c.used = make([]bool, n)
 	}
+	if c.session != "" {
+		routes := c.pool.sessionRoutes()
+		available := false
+		for i := range routes {
+			if c.used[i] && !c.pool.nodes[i].proxy.pool {
+				routes[i].ready = false
+			}
+			available = available || routes[i].ready
+		}
+		c.offset = n
+		if available {
+			idx := c.pool.sessions.choose(c.session, routes)
+			c.used[idx] = true
+			return c.pool.nodes[idx]
+		}
+	}
 	now := time.Now().UnixNano()
 	for c.offset < n {
 		idx := (c.start + c.offset) % n
@@ -121,6 +142,7 @@ func (c *anonymousCursor) Next() *anonymousNode {
 		node := c.pool.nodes[idx]
 		if node.proxy.pool || (!c.used[idx] && node.proxy.healthy.Load() && node.cooldownUntil.Load() <= now) {
 			c.used[idx] = true
+			c.remember(node)
 			return node
 		}
 	}
@@ -130,6 +152,7 @@ func (c *anonymousCursor) Next() *anonymousNode {
 			c.offset++
 			node := c.pool.nodes[idx]
 			if node.proxy.pool {
+				c.remember(node)
 				return node
 			}
 		}
@@ -151,9 +174,16 @@ func (c *anonymousCursor) Next() *anonymousNode {
 	}
 	if choice >= 0 {
 		c.used[choice] = true
+		c.remember(c.pool.nodes[choice])
 		return c.pool.nodes[choice]
 	}
 	return nil
+}
+
+func (c *anonymousCursor) remember(node *anonymousNode) {
+	if c.session != "" {
+		c.pool.sessions.remember(c.session, anonymousSessionRoute(node))
+	}
 }
 
 func (p *anonymousPool) MarkSuccess(node *anonymousNode) {
@@ -274,7 +304,8 @@ func newTransportPool(proxies []string, cfg config.PerformanceConfig, responseHe
 			}
 			transport.Proxy = http.ProxyURL(u)
 		}
-		proxy := &proxyTransport{index: len(p.items), name: raw, pool: isPool, client: &http.Client{Transport: transport}}
+		proxy := &proxyTransport{index: len(p.items), name: raw, pool: isPool, active: new(atomic.Int64)}
+		proxy.client = &http.Client{Transport: &countingTransport{base: transport, active: proxy.active}}
 		proxy.healthy.Store(true)
 		p.items = append(p.items, proxy)
 	}
@@ -371,6 +402,7 @@ type upstreamNode struct {
 }
 
 type nodePool struct {
+	sessions     *sessionScheduler
 	nodes        []*upstreamNode
 	transports   *transportPool
 	next         atomic.Uint64
@@ -387,6 +419,7 @@ func newNodePool(keys []string, transports *transportPool, cooldown time.Duratio
 		return nil, fmt.Errorf("at least one proxy transport is required")
 	}
 	pool := &nodePool{
+		sessions:     newSessionScheduler(),
 		nodes:        make([]*upstreamNode, 0, len(keys)),
 		transports:   transports,
 		cooldown:     cooldown,
@@ -414,6 +447,7 @@ func (p *nodePool) RestoreProxy(recoveredProxy int) int {
 	}
 	p.bindingsMu.Lock()
 	defer p.bindingsMu.Unlock()
+	defer func() { p.sessions.reconcile(p.sessionRoutes()) }()
 
 	moved := 0
 	for _, node := range p.nodes {
@@ -470,6 +504,7 @@ func (p *nodePool) RebindProxy(failedProxy int) int {
 	}
 	p.bindingsMu.Lock()
 	defer p.bindingsMu.Unlock()
+	defer func() { p.sessions.reconcile(p.sessionRoutes()) }()
 
 	moved := 0
 	for _, node := range p.nodes {
@@ -519,13 +554,15 @@ func (p *nodePool) replacementLocked(failedProxy int, healthyOnly bool) int {
 }
 
 type nodeCursor struct {
-	pool *nodePool
-	next int
+	session string
+	used    []bool
+	pool    *nodePool
+	next    int
 }
 
 // Cursor reserves a different starting node for each concurrent request.
 // Selection is delayed until Next, so a node marked failed by the preceding
-// attempt is immediately skipped. Both Cursor and Next allocate no memory.
+// attempt is immediately skipped. Non-sticky cursors allocate no memory.
 func (p *nodePool) Cursor() nodeCursor {
 	if len(p.nodes) == 0 {
 		return nodeCursor{pool: p}
@@ -538,6 +575,16 @@ func (p *nodePool) Cursor() nodeCursor {
 // key while retaining Next's cooldown-aware failover behavior. Empty affinity
 // keys keep the round-robin behavior used by background tasks.
 func (p *nodePool) CursorFor(affinity string) nodeCursor {
+	if p.transports != nil && p.transports.strategy == "sticky_round_robin" && affinity != "" {
+		return nodeCursor{pool: p, next: p.sessions.choose(affinity, p.sessionRoutes()), session: affinity}
+	}
+	if p.transports != nil && p.transports.strategy != "" && p.transports.strategy != "affinity" {
+		start := scheduleStart(p.transports.strategy, affinity, len(p.nodes), &p.next, func(i int) (*proxyTransport, bool) {
+			node := p.nodes[i]
+			return p.Proxy(node), node.cooldownUntil.Load() <= time.Now().UnixNano()
+		})
+		return nodeCursor{pool: p, next: start}
+	}
 	if affinity == "" || len(p.nodes) == 0 {
 		return p.Cursor()
 	}
@@ -549,6 +596,25 @@ func (p *nodePool) CursorFor(affinity string) nodeCursor {
 func (c *nodeCursor) Next() *upstreamNode {
 	if c.pool == nil || len(c.pool.nodes) == 0 {
 		return nil
+	}
+	if c.session != "" {
+		if c.used == nil {
+			c.used = make([]bool, len(c.pool.nodes))
+		}
+		routes := c.pool.sessionRoutes()
+		available := false
+		for i := range routes {
+			if c.used[i] {
+				routes[i].ready = false
+			}
+			available = available || routes[i].ready
+		}
+		if available {
+			choice := c.pool.sessions.choose(c.session, routes)
+			c.used[choice] = true
+			c.next = (choice + 1) % len(c.pool.nodes)
+			return c.pool.nodes[choice]
+		}
 	}
 	now := time.Now().UnixNano()
 	choice := -1
@@ -568,6 +634,9 @@ func (c *nodeCursor) Next() *upstreamNode {
 		return nil
 	}
 	c.next = (choice + 1) % len(c.pool.nodes)
+	if c.session != "" {
+		c.pool.sessions.remember(c.session, c.pool.sessionRoute(c.pool.nodes[choice]))
+	}
 	return c.pool.nodes[choice]
 }
 

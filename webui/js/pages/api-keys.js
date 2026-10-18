@@ -102,7 +102,7 @@ function render(keys) {
           class: `status ${key.enabled ? "ok" : "warn"}`,
           text: key.enabled ? t("已启用", "state.enabled") : t("已停用", "state.disabled"),
         }),
-        el("td", { text: `${summary(usage.last_hour)} / ${summary(usage.lifetime)}` }),
+        el("td", { text: `${summary(usage.today)} / ${summary(usage.lifetime)}` }),
         el("td", { text: key.created_at ? localTime(key.created_at) : t("已有配置", "apikeys.col.legacy") }),
         el("td", {}, [el("div", { class: "key-actions" }, [rename, toggle, remove])]),
       ]),

@@ -72,6 +72,7 @@ func New(cfg config.Config, logger *slog.Logger, monitor *telemetry.Monitor) (*G
 		return nil, err
 	}
 	cooldown := time.Duration(cfg.Performance.FailureCooldownSeconds) * time.Second
+	transports.strategy = cfg.ProxyStrategy
 	zenNodes, err := newNodePool(cfg.ZenKeys, transports, cooldown)
 	if err != nil {
 		return nil, fmt.Errorf("zen node pool: %w", err)

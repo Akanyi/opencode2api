@@ -52,6 +52,7 @@ func (a *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/config", a.authenticate(a.csrf(http.HandlerFunc(a.handlePutConfig))))
 	mux.Handle("POST /api/config/reload", a.authenticate(a.csrf(http.HandlerFunc(a.handleReload))))
 	mux.Handle("POST /api/config/reveal", a.authenticate(a.csrf(http.HandlerFunc(a.handleReveal))))
+	mux.Handle("POST /api/proxies/parse", a.authenticate(a.csrf(http.HandlerFunc(a.handleParseProxies))))
 	mux.Handle("PUT /api/account", a.authenticate(a.csrf(http.HandlerFunc(a.handleAccount))))
 	mux.Handle("GET /api/monitor", a.authenticate(http.HandlerFunc(a.handleMonitor)))
 	mux.Handle("GET /api/debug/models", a.authenticate(http.HandlerFunc(a.handleDebugModels)))
@@ -108,23 +109,25 @@ type SecretView struct {
 }
 
 type ConfigView struct {
-	Listen      string                   `json:"listen"`
-	ServerKeys  []SecretView             `json:"server_keys"`
-	ZenKeys     []SecretView             `json:"zen_keys"`
-	GoKeys      []SecretView             `json:"go_keys"`
-	Anonymous   bool                     `json:"anonymous"`
-	Proxies     []SecretView             `json:"proxies"`
-	ProxyFile   string                   `json:"proxyfile"`
-	Upstream    config.UpstreamConfig    `json:"upstream"`
-	Retry       config.RetryConfig       `json:"retry"`
-	Models      config.ModelsConfig      `json:"models"`
-	Performance config.PerformanceConfig `json:"performance"`
-	Logging     config.LoggingConfig     `json:"logging"`
-	Prefer      config.Tier              `json:"prefer"`
-	Reasoning   config.ReasoningConfig   `json:"reasoning"`
-	WebUI       WebUIView                `json:"webui"`
-	Effective   EffectiveView            `json:"effective"`
-	Restart     []string                 `json:"restart_required_fields,omitempty"`
+	ProxyFiles    []string                 `json:"proxyfiles"`
+	ProxyStrategy string                   `json:"proxy_strategy"`
+	Listen        string                   `json:"listen"`
+	ServerKeys    []SecretView             `json:"server_keys"`
+	ZenKeys       []SecretView             `json:"zen_keys"`
+	GoKeys        []SecretView             `json:"go_keys"`
+	Anonymous     bool                     `json:"anonymous"`
+	Proxies       []SecretView             `json:"proxies"`
+	ProxyFile     string                   `json:"proxyfile"`
+	Upstream      config.UpstreamConfig    `json:"upstream"`
+	Retry         config.RetryConfig       `json:"retry"`
+	Models        config.ModelsConfig      `json:"models"`
+	Performance   config.PerformanceConfig `json:"performance"`
+	Logging       config.LoggingConfig     `json:"logging"`
+	Prefer        config.Tier              `json:"prefer"`
+	Reasoning     config.ReasoningConfig   `json:"reasoning"`
+	WebUI         WebUIView                `json:"webui"`
+	Effective     EffectiveView            `json:"effective"`
+	Restart       []string                 `json:"restart_required_fields,omitempty"`
 }
 
 type EffectiveView struct {
@@ -146,19 +149,21 @@ type SecretInput struct {
 }
 
 type ConfigUpdate struct {
-	Listen      string                   `json:"listen"`
-	ServerKeys  []SecretInput            `json:"server_keys"`
-	ZenKeys     []SecretInput            `json:"zen_keys"`
-	GoKeys      []SecretInput            `json:"go_keys"`
-	Anonymous   bool                     `json:"anonymous"`
-	Proxies     []SecretInput            `json:"proxies"`
-	ProxyFile   string                   `json:"proxyfile"`
-	Upstream    config.UpstreamConfig    `json:"upstream"`
-	Retry       config.RetryConfig       `json:"retry"`
-	Models      config.ModelsConfig      `json:"models"`
-	Performance config.PerformanceConfig `json:"performance"`
-	Logging     config.LoggingConfig     `json:"logging"`
-	Prefer      config.Tier              `json:"prefer"`
+	ProxyFiles    *[]string                `json:"proxyfiles,omitempty"`
+	ProxyStrategy *string                  `json:"proxy_strategy,omitempty"`
+	Listen        string                   `json:"listen"`
+	ServerKeys    []SecretInput            `json:"server_keys"`
+	ZenKeys       []SecretInput            `json:"zen_keys"`
+	GoKeys        []SecretInput            `json:"go_keys"`
+	Anonymous     bool                     `json:"anonymous"`
+	Proxies       []SecretInput            `json:"proxies"`
+	ProxyFile     string                   `json:"proxyfile"`
+	Upstream      config.UpstreamConfig    `json:"upstream"`
+	Retry         config.RetryConfig       `json:"retry"`
+	Models        config.ModelsConfig      `json:"models"`
+	Performance   config.PerformanceConfig `json:"performance"`
+	Logging       config.LoggingConfig     `json:"logging"`
+	Prefer        config.Tier              `json:"prefer"`
 	// A pointer distinguishes an omitted field (legacy clients should keep the
 	// current reasoning configuration) from an explicit empty object (clear it).
 	Reasoning *config.ReasoningConfig `json:"reasoning,omitempty"`
@@ -198,10 +203,18 @@ func (a *Server) handlePutConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reasoning := current.Reasoning
+	proxyFiles, proxyStrategy := current.ProxyFiles, current.ProxyStrategy
+	if update.ProxyFiles != nil {
+		proxyFiles = *update.ProxyFiles
+	}
+	if update.ProxyStrategy != nil {
+		proxyStrategy = *update.ProxyStrategy
+	}
 	if update.Reasoning != nil {
 		reasoning = *update.Reasoning
 	}
 	candidate := config.Config{
+		ProxyFiles: proxyFiles, ProxyStrategy: proxyStrategy,
 		ServerKeyMetadata: current.ServerKeyMetadata,
 		Rotation:          current.Rotation,
 		Listen:            update.Listen, ServerKeys: serverKeys, ZenKeys: zenKeys, GoKeys: goKeys, Anonymous: update.Anonymous, Proxies: proxies, ProxyFile: update.ProxyFile,
@@ -330,6 +343,7 @@ func (a *Server) configView() ConfigView {
 	cfg := a.manager.Config()
 	effective, restart := a.manager.RestartStatus()
 	return ConfigView{
+		ProxyFiles: append([]string(nil), cfg.ProxyFiles...), ProxyStrategy: cfg.ProxyStrategy,
 		Listen: cfg.Listen, ServerKeys: maskSecrets(cfg.ServerKeys, false), ZenKeys: maskSecrets(cfg.ZenKeys, false), GoKeys: maskSecrets(cfg.GoKeys, false), Anonymous: cfg.Anonymous,
 		Proxies: maskSecrets(cfg.Proxies, true), ProxyFile: cfg.ProxyFile, Upstream: cfg.Upstream, Retry: cfg.Retry, Models: cfg.Models,
 		Performance: cfg.Performance, Logging: cfg.Logging, Prefer: cfg.Prefer, Reasoning: cfg.Reasoning,

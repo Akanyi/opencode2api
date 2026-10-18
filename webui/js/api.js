@@ -5,6 +5,8 @@ import { t } from "./i18n.js";
 let csrf = "";
 let onUnauthorized = null;
 
+export const consoleBasePath = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
+
 export function setCsrf(value) {
   csrf = value || "";
 }
@@ -26,7 +28,7 @@ export async function api(path, options = {}) {
   if (options.body) headers["Content-Type"] = "application/json";
   if (csrf && !["GET", "HEAD"].includes((options.method || "GET").toUpperCase()))
     headers["X-CSRF-Token"] = csrf;
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(`${consoleBasePath}${path}`, { ...options, headers });
   if (response.status === 204) return null;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -43,6 +45,7 @@ export async function api(path, options = {}) {
 
 // Client-facing API base derived from the configured listen address.
 export function derivedAPIBase() {
+  if (consoleBasePath) return `${location.origin}${consoleBasePath}`;
   const config = store.get("config");
   const listen = config?.effective?.listen || config?.listen || ":8080";
   const match = listen.match(/^\[.*\]:(\d+)$/) || listen.match(/:(\d+)$/);

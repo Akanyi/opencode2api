@@ -58,10 +58,16 @@ function renderChecklist() {
   });
 }
 
-function renderResources(resources) {
+function renderResources(resources, todayAttempts) {
+  const strategies = { affinity: "会话固定", sticky_round_robin: "会话固定轮询", round_robin: "轮询", random: "随机", least_connections: "最少连接" };
+  $("#proxy-strategy-summary").textContent = `当前调度：${strategies[resources.proxy_strategy] || "会话固定"} · 连接数包含流式响应与后台检查`;
+  if (resources.proxy_strategy === "sticky_round_robin") {
+    $("#proxy-strategy-summary").textContent += ` · 空闲 ${resources.session_idle_ttl_seconds / 60} 分钟释放 · 会话迁移 ${resources.session_migrations || 0} 次（进程累计）`;
+  }
   const proxies = $("#proxy-table");
   proxies.replaceChildren();
   (resources.proxies || []).forEach((proxy) => {
+    const attempts = todayAttempts?.[proxy.id] || {};
     proxies.append(
       el("tr", {}, [
         el("td", { text: proxy.address }),
@@ -74,10 +80,13 @@ function renderResources(resources) {
             proxy.anonymous ? t("开", "common.on") : t("关", "common.off")
           }`,
         }),
+        el("td", { class: "num", text: formatNumber(proxy.active_connections || 0) }),
+        el("td", { class: "num", text: formatNumber(proxy.sticky_sessions || 0) }),
+        el("td", { class: "num", text: `${attempts.total || 0} / ${attempts.success || 0} / ${attempts.failed || 0}` }),
       ]),
     );
   });
-  if (!proxies.children.length) emptyRow(proxies, 3);
+  if (!proxies.children.length) emptyRow(proxies, 6);
   const keys = $("#key-table");
   keys.replaceChildren();
   if (resources.anonymous) {
@@ -132,17 +141,29 @@ function renderBreakdowns(metrics) {
 
 function renderSummary(monitor) {
   const metrics = monitor.metrics;
-  $("#m-total").textContent = formatNumber(metrics.last_hour.total);
-  $("#m-rate").textContent = `${((metrics.last_hour.success_rate || 0) * 100).toFixed(1)}%`;
-  $("#m-p95").textContent = `${metrics.last_hour.p95_ms || 0} ms`;
+  const today = metrics.today || {};
+  $("#m-total").textContent = formatNumber(today.total);
+  $("#m-rate").textContent = `${((today.success_rate || 0) * 100).toFixed(1)}%`;
+  $("#m-p95").textContent = `${today.p95_ms || 0} ms`;
   $("#m-active").textContent = `${metrics.active_requests || 0} / ${metrics.active_streams || 0}`;
-  renderResources(monitor.resources);
+  $("#m-peak").textContent = `今日峰值并发 ${today.peak_concurrency || 0}`;
+  const since = new Date(Math.max(Date.parse(metrics.day_start), Date.parse(metrics.started_at)));
+  $("#statistics-period").textContent = `今日 · ${metrics.timezone || "Asia/Singapore"}`;
+  $("#statistics-period").title = `采集开始：${since.toLocaleString(undefined, { timeZone: metrics.timezone || "Asia/Singapore" })}；进程重启会清空内存统计`;
+  renderResources(monitor.resources, monitor.upstream?.today?.proxies);
   renderBreakdowns(metrics);
 }
 
 function renderTrend(metrics) {
   const trend = $("#usage-trend");
-  const series = metrics?.series || [];
+  const groups = new Map();
+  for (const point of metrics?.today_series || []) {
+    const minute = Math.floor(Date.parse(point.minute) / 900000) * 900000;
+    const group = groups.get(minute) || { minute: new Date(minute).toISOString(), input_tokens: 0, output_tokens: 0, total_tokens: 0 };
+    for (const key of ["input_tokens", "output_tokens", "total_tokens"]) group[key] += point[key] || 0;
+    groups.set(minute, group);
+  }
+  const series = [...groups.values()];
   const maximum = Math.max(1, ...series.map((point) => point.total_tokens || 0));
   trend.replaceChildren();
   series.forEach((point) => {
@@ -152,12 +173,7 @@ function renderTrend(metrics) {
     trend.append(bar);
   });
   $("#usage-trend-meta").textContent = series.length
-    ? t(
-        `峰值 ${formatNumber(maximum)} tokens / 分钟 · 近 ${series.length} 分钟`,
-        "usage.trend.peak",
-        formatNumber(maximum),
-        series.length,
-      )
+    ? `今日峰值 ${formatNumber(maximum)} tokens / 15 分钟 · ${metrics.timezone || "Asia/Singapore"}`
     : t("尚无趋势数据", "usage.trend.empty");
 }
 
@@ -202,7 +218,7 @@ function renderTiers(usage) {
 }
 
 function renderUsage(monitor) {
-  const usage = monitor.usage?.last_hour || {};
+  const usage = monitor.usage?.today || {};
   const tokens = usage.tokens || {};
   $("#u-coverage").textContent = `${((usage.coverage || 0) * 100).toFixed(1)}%`;
   $("#u-total").textContent = formatNumber(tokens.total_tokens);

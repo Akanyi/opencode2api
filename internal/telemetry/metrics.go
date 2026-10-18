@@ -10,23 +10,24 @@ import (
 )
 
 type metricBucket struct {
-	minute        int64
-	total         uint64
-	success       uint64
-	errors        uint64
-	duration      uint64
-	histogram     [11]uint64
-	endpoints     map[string]uint64
-	models        map[string]uint64
-	tiers         map[string]uint64
-	statuses      map[string]uint64
-	usageRequests uint64
-	usageReported uint64
-	tokens        TokenCounts
-	usageModels   map[string]TokenCounts
-	usageTiers    map[string]TokenCounts
-	usageSessions map[string]TokenCounts
-	usageKeys     map[string]ServerKeyUsage
+	peakConcurrency int64
+	minute          int64
+	total           uint64
+	success         uint64
+	errors          uint64
+	duration        uint64
+	histogram       [11]uint64
+	endpoints       map[string]uint64
+	models          map[string]uint64
+	tiers           map[string]uint64
+	statuses        map[string]uint64
+	usageRequests   uint64
+	usageReported   uint64
+	tokens          TokenCounts
+	usageModels     map[string]TokenCounts
+	usageTiers      map[string]TokenCounts
+	usageSessions   map[string]TokenCounts
+	usageKeys       map[string]ServerKeyUsage
 }
 
 func (b *metricBucket) reset(minute int64) {
@@ -68,6 +69,7 @@ type ServerKeyUsage struct {
 }
 
 type UsageSnapshot struct {
+	Today    UsagePeriod `json:"today"`
 	Lifetime UsagePeriod `json:"lifetime"`
 	Window   UsagePeriod `json:"last_hour"`
 }
@@ -79,6 +81,7 @@ type AttemptCounts struct {
 }
 
 type AttemptAggregate struct {
+	Proxies map[string]AttemptCounts `json:"proxies"`
 	AttemptCounts
 	SuccessRate float64                  `json:"success_rate"`
 	Tiers       map[string]AttemptCounts `json:"tiers"`
@@ -87,6 +90,7 @@ type AttemptAggregate struct {
 }
 
 type UpstreamAttempt struct {
+	ProxyID    string    `json:"proxy_id,omitempty"`
 	Time       time.Time `json:"time"`
 	RequestID  string    `json:"request_id"`
 	Model      string    `json:"model"`
@@ -129,6 +133,7 @@ type attemptBucket struct {
 }
 
 type UpstreamSnapshot struct {
+	Today    AttemptAggregate  `json:"today"`
 	Lifetime AttemptAggregate  `json:"lifetime"`
 	Window   AttemptAggregate  `json:"last_hour"`
 	Requests []UpstreamRequest `json:"requests"`
@@ -240,6 +245,7 @@ func (ring *upstreamAttemptRing) Snapshot(cutoff time.Time, limit int) []Upstrea
 }
 
 type Monitor struct {
+	now             func() time.Time
 	started         time.Time
 	active          atomic.Int64
 	activeStreams   atomic.Int64
@@ -247,17 +253,18 @@ type Monitor struct {
 	success         atomic.Uint64
 	errors          atomic.Uint64
 	mu              sync.Mutex
-	buckets         [60]metricBucket
+	buckets         [1440]metricBucket
 	lifetimeUsage   UsagePeriod
 	sessionSeen     map[string]int64
 	attemptLifetime AttemptAggregate
-	attemptBuckets  [60]attemptBucket
+	attemptBuckets  [1440]attemptBucket
 	recentRequests  upstreamRequestRing
 	recentAttempts  upstreamAttemptRing
 }
 
 func NewMonitor() *Monitor {
 	return &Monitor{
+		now:             time.Now,
 		started:         time.Now().UTC(),
 		lifetimeUsage:   newUsagePeriod(),
 		sessionSeen:     make(map[string]int64),
@@ -275,6 +282,38 @@ func (m *Monitor) EndStream() { m.activeStreams.Add(-1) }
 
 var latencyBounds = [...]uint64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000}
 
+var statisticsLocation = time.FixedZone("Asia/Singapore", 8*60*60)
+
+func dayStart(now time.Time) time.Time {
+	local := now.In(statisticsLocation)
+	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, statisticsLocation)
+}
+
+func (m *Monitor) BeginRequest() {
+	active := m.active.Add(1)
+	minute := m.now().Unix() / 60
+	m.mu.Lock()
+	bucket := &m.buckets[minute%int64(len(m.buckets))]
+	if bucket.minute != minute {
+		bucket.reset(minute)
+	}
+	bucket.peakConcurrency = max(bucket.peakConcurrency, active)
+	m.mu.Unlock()
+}
+
+func (m *Monitor) EndRequest() {
+	// Include work that began before midnight in the following day's peak.
+	minute := m.now().Unix() / 60
+	m.mu.Lock()
+	bucket := &m.buckets[minute%int64(len(m.buckets))]
+	if bucket.minute != minute {
+		bucket.reset(minute)
+	}
+	bucket.peakConcurrency = max(bucket.peakConcurrency, m.active.Load())
+	m.active.Add(-1)
+	m.mu.Unlock()
+}
+
 func (m *Monitor) Record(endpoint string, status int, duration time.Duration, meta *RequestMeta) {
 	success := requestSucceeded(status, meta)
 	m.total.Add(1)
@@ -283,9 +322,10 @@ func (m *Monitor) Record(endpoint string, status int, duration time.Duration, me
 	} else {
 		m.errors.Add(1)
 	}
-	minute := time.Now().Unix() / 60
+	now := m.now()
+	minute := now.Unix() / 60
 	m.mu.Lock()
-	bucket := &m.buckets[minute%60]
+	bucket := &m.buckets[minute%int64(len(m.buckets))]
 	if bucket.minute != minute {
 		bucket.reset(minute)
 	}
@@ -333,7 +373,7 @@ func (m *Monitor) Record(endpoint string, status int, duration time.Duration, me
 		}
 		if meta.Request != "" && meta.Model != "" {
 			request := UpstreamRequest{
-				Time: time.Now().UTC(), RequestID: meta.Request, Session: meta.Session, ServerKeyID: meta.ServerKeyID, Model: meta.Model, Tier: meta.Tier,
+				Time: now.UTC(), RequestID: meta.Request, Session: meta.Session, ServerKeyID: meta.ServerKeyID, Model: meta.Model, Tier: meta.Tier,
 				KeyID: meta.KeyID, Channel: meta.Channel, Anonymous: meta.Anonymous, Proxy: meta.Proxy,
 				Attempts: meta.Attempts, Status: status, DurationMS: max(duration.Milliseconds(), 0),
 				Success: success,
@@ -348,7 +388,7 @@ func (m *Monitor) Record(endpoint string, status int, duration time.Duration, me
 			if meta.Outcome != "" {
 				request.Outcome = meta.Outcome
 			}
-			m.recentRequests.PruneBefore(request.Time.Add(-time.Hour))
+			m.recentRequests.PruneBefore(dayStart(now))
 			m.recentRequests.Add(request)
 		}
 	}
@@ -379,24 +419,28 @@ func requestOutcome(status int, channel string) string {
 
 func (m *Monitor) RecordAttempt(attempt UpstreamAttempt) {
 	if attempt.Time.IsZero() {
-		attempt.Time = time.Now().UTC()
+		attempt.Time = m.now().UTC()
 	} else {
 		attempt.Time = attempt.Time.UTC()
 	}
 	minute := attempt.Time.Unix() / 60
 	m.mu.Lock()
 	recordAttemptAggregate(&m.attemptLifetime, attempt)
-	bucket := &m.attemptBuckets[minute%60]
+	bucket := &m.attemptBuckets[minute%int64(len(m.attemptBuckets))]
 	if bucket.minute != minute {
 		*bucket = attemptBucket{minute: minute, aggregate: newAttemptAggregate()}
 	}
 	recordAttemptAggregate(&bucket.aggregate, attempt)
-	m.recentAttempts.PruneBefore(attempt.Time.Add(-time.Hour))
+	m.recentAttempts.PruneBefore(dayStart(attempt.Time))
 	m.recentAttempts.Add(attempt)
 	m.mu.Unlock()
 }
 
 type MonitorSnapshot struct {
+	Today         MetricSummary     `json:"today"`
+	TodaySeries   []MetricSeries    `json:"today_series"`
+	DayStart      time.Time         `json:"day_start"`
+	Timezone      string            `json:"timezone"`
 	StartedAt     time.Time         `json:"started_at"`
 	UptimeSeconds int64             `json:"uptime_seconds"`
 	Active        int64             `json:"active_requests"`
@@ -413,14 +457,15 @@ type MonitorSnapshot struct {
 }
 
 type MetricSummary struct {
-	Total       uint64  `json:"total"`
-	Success     uint64  `json:"success"`
-	Errors      uint64  `json:"errors"`
-	SuccessRate float64 `json:"success_rate"`
-	AverageMS   float64 `json:"average_ms,omitempty"`
-	P50MS       uint64  `json:"p50_ms,omitempty"`
-	P95MS       uint64  `json:"p95_ms,omitempty"`
-	P99MS       uint64  `json:"p99_ms,omitempty"`
+	PeakConcurrency int64   `json:"peak_concurrency"`
+	Total           uint64  `json:"total"`
+	Success         uint64  `json:"success"`
+	Errors          uint64  `json:"errors"`
+	SuccessRate     float64 `json:"success_rate"`
+	AverageMS       float64 `json:"average_ms,omitempty"`
+	P50MS           uint64  `json:"p50_ms,omitempty"`
+	P95MS           uint64  `json:"p95_ms,omitempty"`
+	P99MS           uint64  `json:"p99_ms,omitempty"`
 }
 
 type MetricSeries struct {
@@ -439,16 +484,24 @@ type MetricSeries struct {
 // ServerKeyUsage returns per-server-key usage for the lifetime and the last
 // hour. The API key list polls it, so it skips building a full Snapshot.
 func (m *Monitor) ServerKeyUsage() (lifetime, window map[string]ServerKeyUsage) {
-	nowMinute := time.Now().Unix() / 60
+	return m.serverKeyUsageSince(m.now().Add(-59 * time.Minute))
+}
+
+func (m *Monitor) TodayServerKeyUsage() map[string]ServerKeyUsage {
+	_, today := m.serverKeyUsageSince(dayStart(m.now()))
+	return today
+}
+
+func (m *Monitor) serverKeyUsageSince(since time.Time) (lifetime, window map[string]ServerKeyUsage) {
+	nowMinute := m.now().Unix() / 60
 	lifetime, window = make(map[string]ServerKeyUsage), make(map[string]ServerKeyUsage)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for key, value := range m.lifetimeUsage.ServerKeys {
 		lifetime[key] = value
 	}
-	for offset := int64(0); offset < 60; offset++ {
-		minute := nowMinute - offset
-		if bucket := &m.buckets[minute%60]; bucket.minute == minute {
+	for minute := since.Unix() / 60; minute <= nowMinute; minute++ {
+		if bucket := &m.buckets[minute%int64(len(m.buckets))]; bucket.minute == minute {
 			for key, value := range bucket.usageKeys {
 				addServerKeyUsage(window, key, value)
 			}
@@ -458,21 +511,36 @@ func (m *Monitor) ServerKeyUsage() (lifetime, window map[string]ServerKeyUsage) 
 }
 
 func (m *Monitor) Snapshot() MonitorSnapshot {
-	nowMinute := time.Now().Unix() / 60
+	now := m.now()
+	hour := m.snapshotPeriod(now, 60)
+	today := m.snapshotPeriod(now, now.Unix()/60-dayStart(now).Unix()/60+1)
+	hour.Today, hour.TodaySeries = today.Window, today.Series
+	hour.Usage.Today, hour.Upstream.Today = today.Usage.Window, today.Upstream.Window
+	hour.Endpoints, hour.Models, hour.Tiers, hour.Statuses = today.Endpoints, today.Models, today.Tiers, today.Statuses
+	hour.Upstream.Requests, hour.Upstream.Recent = today.Upstream.Requests, today.Upstream.Recent
+	hour.DayStart, hour.Timezone = dayStart(now), "Asia/Singapore"
+	// A request crossing midnight is still active in the new day's peak.
+	hour.Today.PeakConcurrency = max(hour.Today.PeakConcurrency, hour.Active)
+	return hour
+}
+
+func (m *Monitor) snapshotPeriod(now time.Time, minutes int64) MonitorSnapshot {
+	nowMinute := now.Unix() / 60
 	window := MetricSummary{}
 	var histogram [11]uint64
 	endpoints, models, tiers, statuses := map[string]uint64{}, map[string]uint64{}, map[string]uint64{}, map[string]uint64{}
-	series := make([]MetricSeries, 0, 60)
+	series := make([]MetricSeries, 0, minutes)
 	usageWindow := newUsagePeriod()
 	upstreamWindow := newAttemptAggregate()
 	var recentRequests []UpstreamRequest
 	var recentAttempts []UpstreamAttempt
 	m.mu.Lock()
-	for offset := int64(59); offset >= 0; offset-- {
+	for offset := minutes - 1; offset >= 0; offset-- {
 		minute := nowMinute - offset
-		bucket := &m.buckets[minute%60]
+		bucket := &m.buckets[minute%int64(len(m.buckets))]
 		entry := MetricSeries{Minute: time.Unix(minute*60, 0).UTC()}
 		if bucket.minute == minute {
+			window.PeakConcurrency = max(window.PeakConcurrency, bucket.peakConcurrency)
 			entry.Total, entry.Success, entry.Errors = bucket.total, bucket.success, bucket.errors
 			entry.InputTokens, entry.OutputTokens = bucket.tokens.Input, bucket.tokens.Output
 			entry.CachedTokens, entry.ReasoningTokens, entry.TotalTokens = bucket.tokens.Cached, bucket.tokens.Reasoning, bucket.tokens.Total
@@ -498,7 +566,7 @@ func (m *Monitor) Snapshot() MonitorSnapshot {
 				addServerKeyUsage(usageWindow.ServerKeys, key, value)
 			}
 		}
-		attemptBucket := &m.attemptBuckets[minute%60]
+		attemptBucket := &m.attemptBuckets[minute%int64(len(m.attemptBuckets))]
 		if attemptBucket.minute == minute {
 			mergeAttemptAggregate(&upstreamWindow, attemptBucket.aggregate)
 		}
@@ -506,9 +574,9 @@ func (m *Monitor) Snapshot() MonitorSnapshot {
 	}
 	usageLifetime := cloneUsagePeriod(m.lifetimeUsage)
 	upstreamLifetime := cloneAttemptAggregate(m.attemptLifetime)
-	cutoff := time.Now().Add(-time.Hour)
-	m.recentRequests.PruneBefore(cutoff)
-	m.recentAttempts.PruneBefore(cutoff)
+	cutoff := time.Unix((nowMinute-minutes+1)*60, 0)
+	m.recentRequests.PruneBefore(dayStart(now))
+	m.recentAttempts.PruneBefore(dayStart(now))
 	recentRequests = m.recentRequests.Snapshot(cutoff, monitorRecentOutputLimit)
 	recentAttempts = m.recentAttempts.Snapshot(cutoff, monitorRecentOutputLimit)
 	m.mu.Unlock()
@@ -632,7 +700,8 @@ func finalizeUsagePeriod(period *UsagePeriod) {
 
 func newAttemptAggregate() AttemptAggregate {
 	return AttemptAggregate{
-		Tiers: make(map[string]AttemptCounts), Channels: make(map[string]AttemptCounts), Keys: make(map[string]AttemptCounts),
+		Proxies: make(map[string]AttemptCounts),
+		Tiers:   make(map[string]AttemptCounts), Channels: make(map[string]AttemptCounts), Keys: make(map[string]AttemptCounts),
 	}
 }
 
@@ -641,6 +710,11 @@ func recordAttemptAggregate(target *AttemptAggregate, attempt UpstreamAttempt) {
 	addAttemptMap(target.Tiers, attempt.Tier, attempt.Success)
 	addAttemptMap(target.Channels, attempt.Channel, attempt.Success)
 	addAttemptMap(target.Keys, attempt.KeyID, attempt.Success)
+	proxyID := attempt.ProxyID
+	if proxyID == "" {
+		proxyID = attempt.Proxy
+	}
+	addAttemptMap(target.Proxies, proxyID, attempt.Success)
 }
 
 func recordAttemptCounts(target *AttemptCounts, success bool) {
@@ -668,6 +742,7 @@ func mergeAttemptAggregate(target *AttemptAggregate, source AttemptAggregate) {
 	mergeAttemptMaps(target.Tiers, source.Tiers)
 	mergeAttemptMaps(target.Channels, source.Channels)
 	mergeAttemptMaps(target.Keys, source.Keys)
+	mergeAttemptMaps(target.Proxies, source.Proxies)
 }
 
 func mergeAttemptMaps(target, source map[string]AttemptCounts) {

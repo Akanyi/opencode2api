@@ -9,10 +9,10 @@
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230a0a0a'/><circle cx='16' cy='16' r='8' fill='none' stroke='white' stroke-width='3'/><circle cx='16' cy='16' r='2.6' fill='white'/></svg>"
     />
-    <link rel="stylesheet" href="/css/tokens.css" />
-    <link rel="stylesheet" href="/css/base.css" />
-    <link rel="stylesheet" href="/css/components.css" />
-    <link rel="stylesheet" href="/css/pages.css" />
+    <link rel="stylesheet" href="./css/tokens.css" />
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/components.css" />
+    <link rel="stylesheet" href="./css/pages.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -99,9 +99,9 @@
               </section>
               <div class="metrics">
                 <div class="metric">
-                  <div class="metric-label" data-i18n="overview.requests">近 1 小时请求</div>
+                  <div class="metric-label" data-i18n="overview.requests">今日请求</div>
                   <div id="m-total" class="metric-value">—</div>
-                  <div class="metric-note" data-i18n="overview.hour">最近 60 分钟</div>
+                  <div class="metric-note" id="statistics-period">今日 00:00 起 · Asia/Singapore</div>
                 </div>
                 <div class="metric">
                   <div class="metric-label" data-i18n="overview.success">成功率</div>
@@ -116,7 +116,7 @@
                 <div class="metric">
                   <div class="metric-label" data-i18n="overview.active">活跃 / 流式</div>
                   <div id="m-active" class="metric-value">—</div>
-                  <div class="metric-note" data-i18n="overview.concurrent">当前并发</div>
+                  <div class="metric-note" id="m-peak">今日峰值并发 —</div>
                 </div>
               </div>
               <div class="split">
@@ -124,6 +124,7 @@
                   <div class="section-head">
                     <div>
                       <h2 class="section-title" data-i18n="overview.proxy.title">Proxy 节点</h2>
+                      <p class="section-caption" id="proxy-strategy-summary"></p>
                     </div>
                   </div>
                   <div class="table-wrap">
@@ -133,6 +134,9 @@
                           <th data-i18n="overview.proxy.col.node">节点</th>
                           <th data-i18n="overview.proxy.col.health">健康</th>
                           <th data-i18n="overview.proxy.col.binding">绑定</th>
+                          <th class="num">当前连接</th>
+                          <th class="num">固定会话</th>
+                          <th class="num">今日尝试 / 成功 / 失败</th>
                         </tr>
                       </thead>
                       <tbody id="proxy-table"></tbody>
@@ -163,7 +167,7 @@
                 <div class="section-head">
                   <div>
                     <h2 class="section-title" data-i18n="overview.distribution.title">请求分布</h2>
-                    <p class="section-caption" data-i18n="overview.distribution.caption">最近一小时，各取前 10。</p>
+                    <p class="section-caption" data-i18n="overview.distribution.caption">今日请求分布，各取前 10。</p>
                   </div>
                 </div>
                 <div id="breakdowns" class="split"></div>
@@ -179,7 +183,7 @@
                 <div class="metric">
                   <div class="metric-label" data-i18n="usage.total">Token 总量</div>
                   <div id="u-total" class="metric-value">—</div>
-                  <div class="metric-note" data-i18n="usage.hour">最近 60 分钟</div>
+                  <div class="metric-note" data-i18n="usage.hour">今日 00:00 起 · Asia/Singapore</div>
                 </div>
                 <div class="metric">
                   <div class="metric-label" data-i18n="usage.cached">缓存 Token</div>
@@ -196,7 +200,7 @@
                 <div class="section-head">
                   <div>
                     <h2 class="section-title" data-i18n="usage.trend.title">每分钟 Token 趋势</h2>
-                    <p class="section-caption" data-i18n="usage.trend.caption">最近 60 分钟；悬停查看输入、输出与总量。</p>
+                    <p class="section-caption" data-i18n="usage.trend.caption">今日每 15 分钟汇总；悬停查看输入、输出与总量。</p>
                   </div>
                 </div>
                 <div id="usage-trend" class="trend"></div>
@@ -565,7 +569,7 @@
                       <th data-i18n="apikeys.col.name">名称</th>
                       <th data-i18n="apikeys.col.tail">密钥尾码</th>
                       <th data-i18n="apikeys.col.state">状态</th>
-                      <th data-i18n="apikeys.col.usage">用量（近 1 小时 / 累计）</th>
+                      <th data-i18n="apikeys.col.usage">用量（今日 / 进程累计）</th>
                       <th data-i18n="apikeys.col.created">创建时间</th>
                       <th data-i18n="apikeys.col.action">操作</th>
                     </tr>
@@ -851,6 +855,29 @@
                       <label for="c-proxyfile">Proxy File</label>
                       <input id="c-proxyfile" placeholder="proxies.txt" />
                     </div>
+                    <div class="field">
+                      <label for="c-proxyfiles">多个代理文件路径（每行一个）</label>
+                      <textarea id="c-proxyfiles" placeholder="proxies-a.txt&#10;proxies-b.csv"></textarea>
+                      <p class="hint">相对于配置文件目录；与原 Proxy File、手填代理合并去重。保存或重载时读取。</p>
+                    </div>
+                    <div class="field">
+                      <label for="proxy-import">导入多个本地代理文件</label>
+                      <input id="proxy-import" type="file" multiple accept=".txt,.csv,.list" />
+                      <p class="hint">支持 URL 列表、CSV 的 IP/Port/User/Pass 或 URL 列。导入后可检查，保存才生效。</p>
+                      <p id="proxy-import-status" class="hint" role="status"></p>
+                    </div>
+                    <div class="field">
+                      <label for="c-proxy-strategy">代理池调度方式</label>
+                      <select id="c-proxy-strategy">
+                        <option value="affinity">会话固定（默认）</option>
+                        <option value="sticky_round_robin">会话固定轮询（均分与转移）</option>
+                        <option value="round_robin">轮询</option>
+                        <option value="random">随机</option>
+                        <option value="least_connections">最少连接</option>
+                      </select>
+                      <p class="hint">匿名请求在代理间调度；付费通道在已绑定代理的 Key 节点间调度。不可用节点继续按健康与冷却状态故障转移。</p>
+                      <p class="hint">会话固定轮询：新会话按代理现有固定会话数均分；同会话保持节点，故障或冷却时转移并记住新节点。空闲 30 分钟释放分配，热重载保留有效会话。</p>
+                    </div>
                   </div>
                 </section>
               </div>
@@ -1078,6 +1105,6 @@
     <div id="dialog-host"></div>
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-    <script type="module" src="/js/main.js"></script>
+    <script type="module" src="./js/main.js"></script>
   </body>
 </html>

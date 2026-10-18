@@ -205,6 +205,9 @@ export function bindTabs(page, onSwitch) {
     for (const panel of panels) panel.classList.toggle("hidden", panel.dataset.panel !== id);
     onSwitch?.(id);
   };
-  for (const button of buttons) button.addEventListener("click", () => activate(button.dataset.tab));
+  for (const button of buttons) {
+    button.type = "button";
+    button.addEventListener("click", () => activate(button.dataset.tab));
+  }
   return { activate };
 }

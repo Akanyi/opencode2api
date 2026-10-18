@@ -6,6 +6,8 @@
   "anonymous": false,
   "proxies": ["direct"],
   "proxyfile": "",
+  "proxyfiles": [],
+  "proxy_strategy": "affinity",
   "upstream": {
     "zen": "https://opencode.ai/zen",
     "go": "https://opencode.ai/zen/go",

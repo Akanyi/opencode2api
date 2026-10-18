@@ -2,6 +2,7 @@
 // connection lifecycle is owned by the console shell.
 import { $, el, timeOnly, toast } from "./ui.js";
 import { t } from "./i18n.js";
+import { consoleBasePath } from "./api.js";
 
 let events = [];
 let source = null;
@@ -45,7 +46,7 @@ export function connect() {
   // The server replays its recent ring on every subscribe; start from a clean
   // buffer so a re-login does not duplicate the previous session's events.
   events = [];
-  source = new EventSource("/api/logs/stream");
+  source = new EventSource(`${consoleBasePath}/api/logs/stream`);
   source.addEventListener("log", (event) => {
     events.push(JSON.parse(event.data));
     if (events.length > 2000) events.shift();

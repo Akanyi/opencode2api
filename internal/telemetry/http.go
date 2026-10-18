@@ -114,9 +114,9 @@ func Middleware(monitor *Monitor, logger *slog.Logger, next http.Handler) http.H
 			r = r.WithContext(WithRequestMeta(r.Context(), meta))
 		}
 		writer := &statusWriter{ResponseWriter: w}
-		monitor.active.Add(1)
+		monitor.BeginRequest()
 		defer func() {
-			monitor.active.Add(-1)
+			monitor.EndRequest()
 			status := writer.status
 			if status == 0 {
 				status = http.StatusOK

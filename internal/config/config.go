@@ -25,6 +25,8 @@ type Config struct {
 	Anonymous         bool                         `json:"anonymous"`
 	Proxies           []string                     `json:"proxies"`
 	ProxyFile         string                       `json:"proxyfile"`
+	ProxyFiles        []string                     `json:"proxyfiles,omitempty"`
+	ProxyStrategy     string                       `json:"proxy_strategy"`
 	Upstream          UpstreamConfig               `json:"upstream"`
 	Retry             RetryConfig                  `json:"retry"`
 	Models            ModelsConfig                 `json:"models"`
@@ -167,6 +169,16 @@ func Normalize(path string, cfg Config) (Config, error) {
 	trimList(&cfg.ZenKeys)
 	trimList(&cfg.GoKeys)
 	cfg.ProxyFile = strings.TrimSpace(cfg.ProxyFile)
+	trimList(&cfg.ProxyFiles)
+	cfg.ProxyStrategy = strings.ToLower(strings.TrimSpace(cfg.ProxyStrategy))
+	if cfg.ProxyStrategy == "" {
+		cfg.ProxyStrategy = "affinity"
+	}
+	switch cfg.ProxyStrategy {
+	case "affinity", "sticky_round_robin", "round_robin", "random", "least_connections":
+	default:
+		return Config{}, errors.New("proxy_strategy must be affinity, sticky_round_robin, round_robin, random, or least_connections")
+	}
 	if err := resolveProxyFiles(path, &cfg); err != nil {
 		return Config{}, err
 	}
@@ -352,6 +364,7 @@ func Clone(cfg Config) Config {
 	cfg.ZenKeys = append([]string(nil), cfg.ZenKeys...)
 	cfg.GoKeys = append([]string(nil), cfg.GoKeys...)
 	cfg.Proxies = append([]string(nil), cfg.Proxies...)
+	cfg.ProxyFiles = append([]string(nil), cfg.ProxyFiles...)
 	cfg.effectiveProxies = append([]string(nil), cfg.effectiveProxies...)
 	if cfg.Models.Protocols != nil {
 		protocols := make(map[string]string, len(cfg.Models.Protocols))

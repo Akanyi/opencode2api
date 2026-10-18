@@ -30,6 +30,18 @@ const HASH_ALIASES = {
 let current = null;
 let monitorTimer = null;
 
+// Reverse-proxy deployments may supply an existing administrator login flow.
+function externalLoginURL() {
+  const configured = document.documentElement.dataset.loginUrl;
+  if (!configured) return null;
+  try {
+    const url = new URL(configured, location.href);
+    return url.origin === location.origin ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 function renderPageHeader(page) {
   if (!page) return;
   $("#page-title").textContent = i18n.t(page.title, `page.${page.id}.title`);
@@ -51,6 +63,11 @@ function openPage(id) {
 }
 
 function showLogin() {
+  const external = externalLoginURL();
+  if (external) {
+    location.replace(external.href);
+    return;
+  }
   clearCsrf();
   current?.hide?.();
   current = null;
@@ -106,7 +123,13 @@ $("#logout").addEventListener("click", async () => {
   try {
     await api("/api/auth/logout", { method: "POST", body: "{}" });
   } finally {
-    showLogin();
+    const external = externalLoginURL();
+    if (external) {
+      external.searchParams.set("logged_out", "1");
+      location.replace(external.href);
+    } else {
+      showLogin();
+    }
   }
 });
 

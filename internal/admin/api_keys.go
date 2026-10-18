@@ -26,12 +26,14 @@ type APIKeyView struct {
 // APIKeyUsage is in-memory like the rest of the monitor: it restarts from zero
 // with the process and survives hot reloads.
 type APIKeyUsage struct {
+	Today    telemetry.ServerKeyUsage `json:"today"`
 	Lifetime telemetry.ServerKeyUsage `json:"lifetime"`
 	Window   telemetry.ServerKeyUsage `json:"last_hour"`
 }
 
 func (a *Server) apiKeyViews(cfg config.Config) []APIKeyView {
 	lifetime, window := a.monitor.ServerKeyUsage()
+	today := a.monitor.TodayServerKeyUsage()
 	items := make([]APIKeyView, 0, len(cfg.ServerKeys))
 	for i, key := range cfg.ServerKeys {
 		id := config.Fingerprint(key)
@@ -42,7 +44,7 @@ func (a *Server) apiKeyViews(cfg config.Config) []APIKeyView {
 		}
 		item := APIKeyView{
 			ID: id, Name: name, Display: config.MaskValue(key), Enabled: !meta.Disabled,
-			Usage: APIKeyUsage{Lifetime: lifetime[id], Window: window[id]},
+			Usage: APIKeyUsage{Lifetime: lifetime[id], Window: window[id], Today: today[id]},
 		}
 		if !meta.CreatedAt.IsZero() {
 			created := meta.CreatedAt

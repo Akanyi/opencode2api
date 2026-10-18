@@ -121,6 +121,9 @@ func (m *RuntimeManager) build(cfg config.Config) (*gatewayRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	if current := m.current.Load(); current != nil {
+		reuseProxyConnectionCounters(current.gateway.transports, gateway.transports)
+	}
 	gateway.rotation = m.rotation
 	availabilityPath := ""
 	if m.configPath != "" {
@@ -250,6 +253,14 @@ func (m *RuntimeManager) applyLocked(candidate config.Config, persist bool) (App
 		result.RestartFields = append(result.RestartFields, "webui.enabled")
 	}
 	result.RestartRequired = len(result.RestartFields) > 0
+	if current != nil {
+		next.gateway.anonymous.sessions = current.gateway.anonymous.sessions
+		next.gateway.zenNodes.sessions = current.gateway.zenNodes.sessions
+		next.gateway.goNodes.sessions = current.gateway.goNodes.sessions
+		next.gateway.anonymous.sessions.reconcile(next.gateway.anonymous.sessionRoutes())
+		next.gateway.zenNodes.sessions.reconcile(next.gateway.zenNodes.sessionRoutes())
+		next.gateway.goNodes.sessions.reconcile(next.gateway.goNodes.sessionRoutes())
+	}
 	m.redactor.Replace(normalized)
 	telemetry.SetLogLevel(m.level, normalized.Logging.Level)
 	if current == nil || normalized.Logging.RingSize != current.config.Logging.RingSize {
@@ -289,11 +300,14 @@ func (m *RuntimeManager) Shutdown() {
 }
 
 type ResourceSnapshot struct {
-	Models    modelcatalog.CatalogSnapshot  `json:"models"`
-	Keys      []KeyStatus                   `json:"keys"`
-	Proxies   []ProxyStatus                 `json:"proxies"`
-	Anonymous bool                          `json:"anonymous"`
-	Metadata  modelcatalog.MetadataSnapshot `json:"metadata"`
+	SessionMigrations     uint64                        `json:"session_migrations"`
+	SessionIdleTTLSeconds int                           `json:"session_idle_ttl_seconds"`
+	ProxyStrategy         string                        `json:"proxy_strategy"`
+	Models                modelcatalog.CatalogSnapshot  `json:"models"`
+	Keys                  []KeyStatus                   `json:"keys"`
+	Proxies               []ProxyStatus                 `json:"proxies"`
+	Anonymous             bool                          `json:"anonymous"`
+	Metadata              modelcatalog.MetadataSnapshot `json:"metadata"`
 }
 
 type KeyStatus struct {
@@ -306,13 +320,16 @@ type KeyStatus struct {
 }
 
 type ProxyStatus struct {
-	Index     int    `json:"index"`
-	Address   string `json:"address"`
-	Healthy   bool   `json:"healthy"`
-	Checking  bool   `json:"checking"`
-	ZenKeys   int    `json:"zen_keys"`
-	GoKeys    int    `json:"go_keys"`
-	Anonymous bool   `json:"anonymous"`
+	StickySessions    int    `json:"sticky_sessions"`
+	ID                string `json:"id"`
+	ActiveConnections int64  `json:"active_connections"`
+	Index             int    `json:"index"`
+	Address           string `json:"address"`
+	Healthy           bool   `json:"healthy"`
+	Checking          bool   `json:"checking"`
+	ZenKeys           int    `json:"zen_keys"`
+	GoKeys            int    `json:"go_keys"`
+	Anonymous         bool   `json:"anonymous"`
 }
 
 func (m *RuntimeManager) Resources() ResourceSnapshot {
@@ -323,6 +340,18 @@ func (m *RuntimeManager) Resources() ResourceSnapshot {
 	gateway := runtime.gateway
 	_, models := gateway.availableModels()
 	result := ResourceSnapshot{Models: models, Anonymous: gateway.cfg.Anonymous}
+	result.ProxyStrategy = gateway.cfg.ProxyStrategy
+	sessionCounts := make(map[string]int)
+	if gateway.cfg.ProxyStrategy == "sticky_round_robin" {
+		result.SessionIdleTTLSeconds = int(sessionIdleTTL.Seconds())
+		for _, scheduler := range []*sessionScheduler{gateway.anonymous.sessions, gateway.zenNodes.sessions, gateway.goNodes.sessions} {
+			counts, migrations := scheduler.snapshot()
+			result.SessionMigrations += migrations
+			for id, count := range counts {
+				sessionCounts[id] += count
+			}
+		}
+	}
 	result.Metadata = gateway.catalog.MetadataSnapshot()
 	result.Keys = append(result.Keys, keyStatuses("zen", gateway.zenNodes)...)
 	result.Keys = append(result.Keys, keyStatuses("go", gateway.goNodes)...)
@@ -334,6 +363,9 @@ func (m *RuntimeManager) Resources() ResourceSnapshot {
 	gateway.goNodes.bindingsMu.Unlock()
 	for _, proxy := range gateway.transports.items {
 		status := ProxyStatus{Index: proxy.index, Address: config.RedactURL(proxy.name), Healthy: proxy.healthy.Load(), Checking: proxy.checking.Load(), Anonymous: gateway.cfg.Anonymous}
+		status.ActiveConnections = proxy.active.Load()
+		status.ID = config.Fingerprint(proxy.name)
+		status.StickySessions = sessionCounts[status.ID]
 		if proxy.index < len(zenBindings) {
 			status.ZenKeys = zenBindings[proxy.index]
 		}

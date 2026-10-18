@@ -45,6 +45,34 @@ function secretInputs(name) {
 
 const numberValue = (selector) => Number($(selector).value);
 
+let importing = false;
+
+async function importProxyFiles(event) {
+  const input = event.currentTarget;
+  const files = [...input.files];
+  if (!files.length) return;
+  const status = $("#proxy-import-status");
+  importing = true;
+  input.disabled = true;
+  try {
+    if (files.length > 32 || files.reduce((sum, file) => sum + file.size, 0) > 1024 * 1024) {
+      throw new Error("最多导入 32 个文件，总大小不超过 1 MiB");
+    }
+    const payload = await Promise.all(files.map(async (file) => ({ name: file.name, content: await file.text() })));
+    const result = await api("/api/proxies/parse", { method: "POST", body: JSON.stringify({ files: payload }) });
+    const area = $("#proxies-new");
+    area.value = [...new Set([...area.value.split(/\r?\n/).filter(Boolean), ...result.proxies])].join("\n");
+    status.textContent = `已导入 ${result.files} 个文件、${result.count} 条唯一代理；点击保存后生效。`;
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message, true);
+  } finally {
+    importing = false;
+    input.disabled = false;
+    input.value = "";
+  }
+}
+
 function fillConfig(value) {
   if (!value) return;
   $("#c-listen").value = value.listen;
@@ -54,6 +82,8 @@ function fillConfig(value) {
   $("#c-web-enabled").checked = value.webui.enabled;
   $("#c-anonymous").checked = !!value.anonymous;
   $("#c-proxyfile").value = value.proxyfile;
+  $("#c-proxyfiles").value = (value.proxyfiles || []).join("\n");
+  $("#c-proxy-strategy").value = value.proxy_strategy || "affinity";
   $("#c-up-zen").value = value.upstream.zen;
   $("#c-up-go").value = value.upstream.go;
   $("#c-attempts").value = value.retry.max_attempts;
@@ -81,6 +111,7 @@ function fillConfig(value) {
 
 async function save(event) {
   event.preventDefault();
+  if (importing) return toast("请等待代理文件导入完成", true);
   const current = store.get("config");
   if (!current) return;
   try {
@@ -92,8 +123,10 @@ async function save(event) {
       anonymous: $("#c-anonymous").checked,
       proxies: secretInputs("proxies"),
       proxyfile: $("#c-proxyfile").value,
+      proxyfiles: $("#c-proxyfiles").value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean),
+      proxy_strategy: $("#c-proxy-strategy").value,
       prefer: $("#c-prefer").value,
-      upstream: { zen: $("#c-up-zen").value, go: $("#c-up-go").value },
+      upstream: { ...current.upstream, zen: $("#c-up-zen").value, go: $("#c-up-go").value },
       retry: { max_attempts: numberValue("#c-attempts"), timeout_seconds: numberValue("#c-timeout") },
       models: {
         refresh_seconds: numberValue("#c-refresh"),
@@ -127,6 +160,7 @@ async function save(event) {
       },
     };
     const result = await api("/api/config", { method: "PUT", body: JSON.stringify(update) });
+    $("#proxy-import-status").textContent = "";
     store.set("config", result.config);
     ["server_keys", "zen_keys", "go_keys", "proxies"].forEach(
       (name) => ($(`#${name}-new`).value = ""),
@@ -209,6 +243,7 @@ export default {
     $("#config-form").addEventListener("submit", save);
     $("#reload-config").addEventListener("click", reload);
     $("#reveal").addEventListener("click", reveal);
+    $("#proxy-import").addEventListener("change", importProxyFiles);
     onChange(() => {
       const value = store.get("config");
       if (value) renderRestartNotice(value);

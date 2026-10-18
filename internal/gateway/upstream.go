@@ -1136,11 +1136,14 @@ func (g *Gateway) recordUpstreamAttempt(ctx context.Context, route models.Route,
 		return
 	}
 	proxyName := "unavailable"
+	proxyID := ""
 	if proxy != nil {
 		proxyName = config.RedactURL(proxy.name)
+		proxyID = config.Fingerprint(proxy.name)
 	}
 	g.monitor.RecordAttempt(telemetry.UpstreamAttempt{
-		Time: time.Now().UTC(), RequestID: ids.Request, Model: route.ID, Tier: string(route.Tier), Attempt: attempt,
+		ProxyID: proxyID,
+		Time:    time.Now().UTC(), RequestID: ids.Request, Model: route.ID, Tier: string(route.Tier), Attempt: attempt,
 		KeyID: keyID, Channel: channel, Anonymous: anonymous, Proxy: proxyName, Status: status,
 		DurationMS: max(duration.Milliseconds(), 0), Success: success, Outcome: outcome,
 	})
