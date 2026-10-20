@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="./css/base.css" />
     <link rel="stylesheet" href="./css/components.css" />
     <link rel="stylesheet" href="./css/pages.css" />
+    <link rel="stylesheet" href="./css/relayfor-md.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -127,16 +128,29 @@
                   <div class="metric-note" id="m-peak">今日峰值并发 —</div>
                 </div>
               </div>
-              <div class="split">
-                <section class="section">
+              <div class="split overview-resources">
+                <section class="section proxy-section" aria-labelledby="proxy-heading">
                   <div class="section-head">
                     <div>
-                      <h2 class="section-title" data-i18n="overview.proxy.title">Proxy 节点</h2>
+                      <h2 id="proxy-heading" class="section-title" data-i18n="overview.proxy.title">Proxy 节点</h2>
                       <p class="section-caption" id="proxy-strategy-summary"></p>
                     </div>
                   </div>
-                  <div class="table-wrap">
-                    <table class="table">
+                  <div id="proxy-pool-summary" class="proxy-pool-summary"></div>
+                  <div class="proxy-toolbar">
+                    <div class="proxy-search">
+                      <label class="sr-only" for="proxy-search" data-i18n="overview.proxy.search">搜索代理地址</label>
+                      <input id="proxy-search" type="search" placeholder="搜索代理地址" data-i18n-attr="placeholder:overview.proxy.search" autocomplete="off" />
+                    </div>
+                    <label class="sr-only" for="proxy-health-filter" data-i18n="overview.proxy.healthFilter">代理健康状态</label>
+                    <select id="proxy-health-filter">
+                      <option value="all" data-i18n="overview.proxy.allStates">全部状态</option>
+                      <option value="healthy" data-i18n="state.healthy">正常</option>
+                      <option value="unhealthy" data-i18n="state.unavailable">不可用</option>
+                    </select>
+                  </div>
+                  <div class="table-wrap proxy-table-scroll" tabindex="0" role="region" aria-label="代理节点列表，可滚动" data-i18n-attr="aria-label:overview.proxy.scrollRegion">
+                    <table class="table proxy-table">
                       <thead>
                         <tr>
                           <th data-i18n="overview.proxy.col.node">节点</th>
@@ -149,6 +163,19 @@
                       </thead>
                       <tbody id="proxy-table"></tbody>
                     </table>
+                  </div>
+                  <div class="proxy-pagination">
+                    <span id="proxy-page-info" role="status" aria-live="polite" aria-atomic="true"></span>
+                    <div class="proxy-page-actions">
+                      <label class="sr-only" for="proxy-page-size" data-i18n="overview.proxy.pageSize">每页代理数量</label>
+                      <select id="proxy-page-size">
+                        <option value="20" data-i18n="overview.proxy.perPage20">20 条 / 页</option>
+                        <option value="50" data-i18n="overview.proxy.perPage50">50 条 / 页</option>
+                        <option value="100" data-i18n="overview.proxy.perPage100">100 条 / 页</option>
+                      </select>
+                      <button id="proxy-prev" type="button" class="btn btn-sm" aria-controls="proxy-table" data-i18n="overview.proxy.previous">上一页</button>
+                      <button id="proxy-next" type="button" class="btn btn-sm" aria-controls="proxy-table" data-i18n="overview.proxy.next">下一页</button>
+                    </div>
                   </div>
                 </section>
                 <section class="section">
