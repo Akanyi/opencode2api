@@ -5,6 +5,7 @@ import * as i18n from "./i18n.js";
 import * as store from "./store.js";
 import { $, $$, toast } from "./ui.js";
 import * as logstream from "./logstream.js";
+import { initNavigation } from "./navigation.js";
 
 import overview from "./pages/overview.js";
 import diagnostics from "./pages/diagnostics.js";
@@ -29,6 +30,7 @@ const HASH_ALIASES = {
 
 let current = null;
 let monitorTimer = null;
+const navigation = initNavigation();
 
 // Reverse-proxy deployments may supply an existing administrator login flow.
 function externalLoginURL() {
@@ -53,16 +55,18 @@ function openPage(id) {
   if (!page) return;
   current?.hide?.();
   history.replaceState(null, "", `#${id}`);
-  $$(".nav-item").forEach((button) =>
+  $$(".nav-item[data-page]").forEach((button) =>
     button.classList.toggle("active", button.dataset.page === id),
   );
   $$(".page").forEach((node) => node.classList.toggle("hidden", node.id !== `page-${id}`));
   renderPageHeader(page);
   current = page;
+  navigation.sync();
   page.show?.();
 }
 
 function showLogin() {
+  navigation.close();
   const external = externalLoginURL();
   if (external) {
     location.replace(external.href);
@@ -110,7 +114,7 @@ store.on("monitor", (data) => {
 
 for (const page of PAGES) page.init?.();
 
-$$(".nav-item").forEach((button) => {
+$$(".nav-item[data-page]").forEach((button) => {
   button.addEventListener("click", () => openPage(button.dataset.page));
 });
 
@@ -156,4 +160,5 @@ i18n.onChange(() => {
 });
 
 i18n.init();
+navigation.sync();
 boot();

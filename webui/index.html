@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="./css/components.css" />
     <link rel="stylesheet" href="./css/pages.css" />
     <link rel="stylesheet" href="./css/relayfor-md.css" />
+    <link rel="stylesheet" href="./css/relayfor-navigation.css" />
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -36,37 +37,39 @@
     </section>
 
     <div id="app" class="app hidden">
-      <aside class="sidebar">
-        <div class="brand">
-          <span class="brand-name">opencode2api</span>
+      <aside id="navigation-rail" class="sidebar nav-rail" aria-label="页面导航">
+        <div class="brand rail-brand">
+          <span class="rail-logo"><span class="material-symbol" aria-hidden="true">code</span></span>
+          <span class="rail-brand-copy"><span class="rail-title">opencode2api</span><span class="rail-sub" data-i18n="nav.console">控制台</span></span>
         </div>
         <nav class="nav" aria-label="页面导航">
           <div class="nav-group">
             <div class="nav-group-title" data-i18n="nav.group.runtime">运行</div>
-            <button class="nav-item active" data-page="overview" data-i18n="nav.overview">概览</button>
-            <button class="nav-item" data-page="diagnostics" data-i18n="nav.diagnostics">诊断</button>
+            <button type="button" class="nav-item active" data-page="overview"><span class="material-symbol" aria-hidden="true">space_dashboard</span><span class="nav-label" data-i18n="nav.overview">概览</span></button>
+            <button type="button" class="nav-item" data-page="diagnostics"><span class="material-symbol" aria-hidden="true">monitoring</span><span class="nav-label" data-i18n="nav.diagnostics">诊断</span></button>
           </div>
           <div class="nav-group">
             <div class="nav-group-title" data-i18n="nav.group.integration">接入</div>
-            <button class="nav-item" data-page="access" data-i18n="nav.access">接入指南</button>
-            <button class="nav-item" data-page="api-keys" data-i18n="nav.api-keys">API Key 管理</button>
+            <button type="button" class="nav-item" data-page="access"><span class="material-symbol" aria-hidden="true">description</span><span class="nav-label" data-i18n="nav.access">接入指南</span></button>
+            <button type="button" class="nav-item" data-page="api-keys"><span class="material-symbol" aria-hidden="true">key</span><span class="nav-label" data-i18n="nav.api-keys">API Key 管理</span></button>
           </div>
           <div class="nav-group">
             <div class="nav-group-title" data-i18n="nav.group.models">模型</div>
-            <button class="nav-item" data-page="model-quotas" data-i18n="nav.model-quotas">
-              模型与额度
-            </button>
-            <button class="nav-item" data-page="rotation" data-i18n="nav.rotation">模型轮转</button>
+            <button type="button" class="nav-item" data-page="model-quotas"><span class="material-symbol" aria-hidden="true">tune</span><span class="nav-label" data-i18n="nav.model-quotas">模型与额度</span></button>
+            <button type="button" class="nav-item" data-page="rotation"><span class="material-symbol" aria-hidden="true">sync</span><span class="nav-label" data-i18n="nav.rotation">模型轮转</span></button>
           </div>
           <div class="nav-group">
             <div class="nav-group-title" data-i18n="nav.group.system">系统</div>
-            <button class="nav-item" data-page="config" data-i18n="nav.config">配置中心</button>
-            <button class="nav-item" data-page="account" data-i18n="nav.account">账号安全</button>
+            <button type="button" class="nav-item" data-page="config"><span class="material-symbol" aria-hidden="true">dns</span><span class="nav-label" data-i18n="nav.config">配置中心</span></button>
+            <button type="button" class="nav-item" data-page="account"><span class="material-symbol" aria-hidden="true">verified_user</span><span class="nav-label" data-i18n="nav.account">账号安全</span></button>
           </div>
         </nav>
-        <div class="sidebar-foot">
+        <div class="sidebar-foot rail-bottom">
+          <button id="rail-collapse" type="button" class="nav-item rail-collapse-toggle" aria-controls="navigation-rail" aria-expanded="true"><span class="material-symbol" aria-hidden="true">left_panel_close</span><span class="nav-label">收起侧边栏</span></button>
+          <button id="logout" type="button" class="nav-item"><span class="material-symbol" aria-hidden="true">logout</span><span class="nav-label" data-i18n="topbar.logout">退出</span></button>
           <a
             id="version"
+            class="rail-version"
             href="https://github.com/jasonxu114514/opencode2api"
             target="_blank"
             rel="noopener noreferrer"
@@ -77,16 +80,17 @@
 
       <div class="content">
         <header class="topbar">
-          <div>
+          <button id="mobile-menu-trigger" type="button" class="md-icon-button mobile-menu-trigger" aria-controls="mobile-navigation-menu" aria-expanded="false" aria-label="打开导航菜单" aria-haspopup="menu"><span class="material-symbol" aria-hidden="true">menu</span></button>
+          <div class="topbar-heading">
             <h1 id="page-title" class="page-title"></h1>
             <p id="page-sub" class="page-sub"></p>
           </div>
           <div class="topbar-actions">
             <select class="lang-switch" data-lang-switch aria-label="语言"></select>
             <button id="refresh-now" class="btn btn-sm" data-i18n="topbar.refresh">刷新</button>
-            <button id="logout" class="btn btn-sm btn-ghost" data-i18n="topbar.logout">退出</button>
           </div>
         </header>
+        <div id="mobile-navigation-menu" class="mobile-nav-menu" role="menu" aria-label="页面导航" hidden inert></div>
 
         <main id="main">
           <div id="restart-notice" class="notice hidden" role="status"></div>
