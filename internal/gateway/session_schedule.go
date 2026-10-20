@@ -171,7 +171,7 @@ func anonymousSessionRoute(node *anonymousNode) sessionRoute {
 	return sessionRoute{id: id, group: id, ready: node.proxy.pool || (node.proxy.healthy.Load() && node.cooldownUntil.Load() <= time.Now().UnixNano())}
 }
 
-func (p *anonymousPool) sessionRoutes() []sessionRoute {
+func (p *anonymousNodes) sessionRoutes() []sessionRoute {
 	routes := make([]sessionRoute, len(p.nodes))
 	for i, node := range p.nodes {
 		routes[i] = anonymousSessionRoute(node)
@@ -179,7 +179,7 @@ func (p *anonymousPool) sessionRoutes() []sessionRoute {
 	return routes
 }
 
-func (p *nodePool) sessionRoute(node *upstreamNode) sessionRoute {
+func (p *upstreamNodes) sessionRoute(node *upstreamNode) sessionRoute {
 	proxy := p.Proxy(node)
 	route := sessionRoute{id: config.Fingerprint(node.key)}
 	if proxy != nil {
@@ -189,7 +189,7 @@ func (p *nodePool) sessionRoute(node *upstreamNode) sessionRoute {
 	return route
 }
 
-func (p *nodePool) sessionRoutes() []sessionRoute {
+func (p *upstreamNodes) sessionRoutes() []sessionRoute {
 	routes := make([]sessionRoute, len(p.nodes))
 	for i, node := range p.nodes {
 		routes[i] = p.sessionRoute(node)

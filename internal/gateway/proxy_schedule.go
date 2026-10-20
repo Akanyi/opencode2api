@@ -48,7 +48,7 @@ func scheduleStart(strategy, affinity string, count int, next *atomic.Uint64, ro
 
 // Keep a connection active through response consumption, including SSE bodies.
 type countingTransport struct {
-	base   *http.Transport
+	base   http.RoundTripper
 	active *atomic.Int64
 }
 
@@ -67,9 +67,13 @@ func (t *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-func (t *countingTransport) CloseIdleConnections() { t.base.CloseIdleConnections() }
+func (t *countingTransport) CloseIdleConnections() {
+	if closer, ok := t.base.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
+}
 
-func reuseProxyConnectionCounters(previous, next *transportPool) {
+func reuseProxyConnectionCounters(previous, next *proxyTransports) {
 	known := make(map[string]*proxyTransport)
 	for _, proxy := range previous.items {
 		known[proxy.name] = proxy
@@ -79,6 +83,7 @@ func reuseProxyConnectionCounters(previous, next *transportPool) {
 			// Old response bodies remain active while a new runtime serves requests.
 			proxy.active = old.active
 			proxy.client.Transport.(*countingTransport).active = old.active
+			proxy.bun.Transport.(*countingTransport).active = old.active
 		}
 	}
 }

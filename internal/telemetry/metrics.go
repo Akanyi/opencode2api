@@ -9,6 +9,8 @@ import (
 	"opencode2api/internal/protocol"
 )
 
+// metricBucket holds the request metrics of one minute. Metrics keeps 60 of
+// them, indexed by minute modulo 60, to cover the last hour.
 type metricBucket struct {
 	peakConcurrency int64
 	minute          int64
@@ -30,6 +32,7 @@ type metricBucket struct {
 	usageKeys       map[string]ServerKeyUsage
 }
 
+// reset clears the bucket for reuse by minute.
 func (b *metricBucket) reset(minute int64) {
 	*b = metricBucket{
 		minute: minute, endpoints: make(map[string]uint64), models: make(map[string]uint64),
@@ -39,6 +42,7 @@ func (b *metricBucket) reset(minute int64) {
 	}
 }
 
+// TokenCounts sums the token usage the upstream reported.
 type TokenCounts struct {
 	Input     uint64 `json:"input_tokens"`
 	Output    uint64 `json:"output_tokens"`
@@ -47,6 +51,9 @@ type TokenCounts struct {
 	Total     uint64 `json:"total_tokens"`
 }
 
+// UsagePeriod is the token usage of the requests routed to a tier over one
+// period. Coverage is the share of those Requests whose usage the upstream
+// Reported.
 type UsagePeriod struct {
 	Requests uint64                 `json:"requests"`
 	Reported uint64                 `json:"reported"`
@@ -63,23 +70,28 @@ type UsagePeriod struct {
 	ServerKeys map[string]ServerKeyUsage `json:"server_keys"`
 }
 
+// ServerKeyUsage is the request count and token usage of one server key.
 type ServerKeyUsage struct {
 	Requests uint64 `json:"requests"`
 	TokenCounts
 }
 
+// UsageSnapshot is the token usage since start and over the last hour.
 type UsageSnapshot struct {
 	Today    UsagePeriod `json:"today"`
 	Lifetime UsagePeriod `json:"lifetime"`
 	Window   UsagePeriod `json:"last_hour"`
 }
 
+// AttemptCounts counts upstream attempts by result.
 type AttemptCounts struct {
 	Total   uint64 `json:"total"`
 	Success uint64 `json:"success"`
 	Failed  uint64 `json:"failed"`
 }
 
+// AttemptAggregate counts upstream attempts in total and per tier, channel and
+// upstream key.
 type AttemptAggregate struct {
 	Proxies map[string]AttemptCounts `json:"proxies"`
 	AttemptCounts
@@ -89,6 +101,8 @@ type AttemptAggregate struct {
 	Keys        map[string]AttemptCounts `json:"keys"`
 }
 
+// UpstreamAttempt is one upstream call made for a client request: one key or
+// anonymous credential through one proxy.
 type UpstreamAttempt struct {
 	ProxyID    string    `json:"proxy_id,omitempty"`
 	Time       time.Time `json:"time"`
@@ -108,7 +122,8 @@ type UpstreamAttempt struct {
 
 // UpstreamRequest is the credential route that was actually used for one
 // client inference request. It is kept separately from UpstreamAttempt,
-// because a single request can try several keys before it succeeds.
+// because a single request can try several keys before it succeeds. A request
+// that never reached an upstream is recorded too, with Channel "not_routed".
 type UpstreamRequest struct {
 	Time        time.Time `json:"time"`
 	RequestID   string    `json:"request_id"`
@@ -127,11 +142,15 @@ type UpstreamRequest struct {
 	Outcome     string    `json:"outcome"`
 }
 
+// attemptBucket holds the upstream attempts of one minute, like metricBucket.
 type attemptBucket struct {
 	minute    int64
 	aggregate AttemptAggregate
 }
 
+// UpstreamSnapshot is the upstream attempt view of the monitor: aggregates
+// since start and over the last hour, plus the newest requests and attempts of
+// the last hour, oldest first.
 type UpstreamSnapshot struct {
 	Today    AttemptAggregate  `json:"today"`
 	Lifetime AttemptAggregate  `json:"lifetime"`
@@ -140,23 +159,30 @@ type UpstreamSnapshot struct {
 	Recent   []UpstreamAttempt `json:"recent"`
 }
 
+// The recent request and attempt buffers hold at most an hour of entries up to
+// these capacities; a snapshot returns the newest monitorRecentOutputLimit.
 const (
 	monitorRecentRequestCapacity = 10000
 	monitorRecentAttemptCapacity = 20000
 	monitorRecentOutputLimit     = 500
 )
 
-type upstreamRequestRing struct {
+// upstreamRequestBuffer is a fixed-capacity ring of recent requests in the
+// order they were added. Add overwrites the oldest entry when it is full, and
+// PruneBefore drops entries from the oldest end until one is not older than
+// cutoff.
+type upstreamRequestBuffer struct {
 	items []UpstreamRequest
 	start int
 	count int
 }
 
-func newUpstreamRequestRing() upstreamRequestRing {
-	return upstreamRequestRing{items: make([]UpstreamRequest, monitorRecentRequestCapacity)}
+func upstreamRequestRing() upstreamRequestBuffer {
+	return upstreamRequestBuffer{items: make([]UpstreamRequest, monitorRecentRequestCapacity)}
 }
 
-func (ring *upstreamRequestRing) Add(value UpstreamRequest) {
+// Add appends value, overwriting the oldest entry once the ring is full.
+func (ring *upstreamRequestBuffer) Add(value UpstreamRequest) {
 	if len(ring.items) == 0 {
 		ring.items = make([]UpstreamRequest, monitorRecentRequestCapacity)
 	}
@@ -170,7 +196,8 @@ func (ring *upstreamRequestRing) Add(value UpstreamRequest) {
 	ring.count++
 }
 
-func (ring *upstreamRequestRing) PruneBefore(cutoff time.Time) {
+// PruneBefore drops the oldest entries that are older than cutoff.
+func (ring *upstreamRequestBuffer) PruneBefore(cutoff time.Time) {
 	for ring.count > 0 && ring.items[ring.start].Time.Before(cutoff) {
 		ring.items[ring.start] = UpstreamRequest{}
 		ring.start = (ring.start + 1) % len(ring.items)
@@ -178,7 +205,9 @@ func (ring *upstreamRequestRing) PruneBefore(cutoff time.Time) {
 	}
 }
 
-func (ring *upstreamRequestRing) Snapshot(cutoff time.Time, limit int) []UpstreamRequest {
+// Snapshot copies the newest limit entries that are not older than cutoff,
+// oldest first.
+func (ring *upstreamRequestBuffer) Snapshot(cutoff time.Time, limit int) []UpstreamRequest {
 	if limit < 1 || ring.count == 0 {
 		return nil
 	}
@@ -195,17 +224,19 @@ func (ring *upstreamRequestRing) Snapshot(cutoff time.Time, limit int) []Upstrea
 	return result
 }
 
-type upstreamAttemptRing struct {
+// upstreamAttemptBuffer is the upstreamRequestBuffer counterpart for attempts.
+type upstreamAttemptBuffer struct {
 	items []UpstreamAttempt
 	start int
 	count int
 }
 
-func newUpstreamAttemptRing() upstreamAttemptRing {
-	return upstreamAttemptRing{items: make([]UpstreamAttempt, monitorRecentAttemptCapacity)}
+func upstreamAttemptRing() upstreamAttemptBuffer {
+	return upstreamAttemptBuffer{items: make([]UpstreamAttempt, monitorRecentAttemptCapacity)}
 }
 
-func (ring *upstreamAttemptRing) Add(value UpstreamAttempt) {
+// Add appends value, overwriting the oldest entry once the ring is full.
+func (ring *upstreamAttemptBuffer) Add(value UpstreamAttempt) {
 	if len(ring.items) == 0 {
 		ring.items = make([]UpstreamAttempt, monitorRecentAttemptCapacity)
 	}
@@ -219,7 +250,8 @@ func (ring *upstreamAttemptRing) Add(value UpstreamAttempt) {
 	ring.count++
 }
 
-func (ring *upstreamAttemptRing) PruneBefore(cutoff time.Time) {
+// PruneBefore drops the oldest entries that are older than cutoff.
+func (ring *upstreamAttemptBuffer) PruneBefore(cutoff time.Time) {
 	for ring.count > 0 && ring.items[ring.start].Time.Before(cutoff) {
 		ring.items[ring.start] = UpstreamAttempt{}
 		ring.start = (ring.start + 1) % len(ring.items)
@@ -227,7 +259,9 @@ func (ring *upstreamAttemptRing) PruneBefore(cutoff time.Time) {
 	}
 }
 
-func (ring *upstreamAttemptRing) Snapshot(cutoff time.Time, limit int) []UpstreamAttempt {
+// Snapshot copies the newest limit entries that are not older than cutoff,
+// oldest first.
+func (ring *upstreamAttemptBuffer) Snapshot(cutoff time.Time, limit int) []UpstreamAttempt {
 	if limit < 1 || ring.count == 0 {
 		return nil
 	}
@@ -244,7 +278,7 @@ func (ring *upstreamAttemptRing) Snapshot(cutoff time.Time, limit int) []Upstrea
 	return result
 }
 
-type Monitor struct {
+type Metrics struct {
 	now             func() time.Time
 	started         time.Time
 	active          atomic.Int64
@@ -258,28 +292,30 @@ type Monitor struct {
 	sessionSeen     map[string]int64
 	attemptLifetime AttemptAggregate
 	attemptBuckets  [1440]attemptBucket
-	recentRequests  upstreamRequestRing
-	recentAttempts  upstreamAttemptRing
+	recentRequests  upstreamRequestBuffer
+	recentAttempts  upstreamAttemptBuffer
 }
 
-func NewMonitor() *Monitor {
-	return &Monitor{
+func Monitor() *Metrics {
+	return &Metrics{
 		now:             time.Now,
 		started:         time.Now().UTC(),
-		lifetimeUsage:   newUsagePeriod(),
+		lifetimeUsage:   usagePeriod(),
 		sessionSeen:     make(map[string]int64),
-		attemptLifetime: newAttemptAggregate(),
-		recentRequests:  newUpstreamRequestRing(),
-		recentAttempts:  newUpstreamAttemptRing(),
+		attemptLifetime: attemptAggregate(),
+		recentRequests:  upstreamRequestRing(),
+		recentAttempts:  upstreamAttemptRing(),
 	}
 }
 
 // BeginStream records a stream entering its response body phase.
-func (m *Monitor) BeginStream() { m.activeStreams.Add(1) }
+func (m *Metrics) BeginStream() { m.activeStreams.Add(1) }
 
 // EndStream releases a stream recorded by BeginStream.
-func (m *Monitor) EndStream() { m.activeStreams.Add(-1) }
+func (m *Metrics) EndStream() { m.activeStreams.Add(-1) }
 
+// latencyBounds are the upper bounds, in milliseconds, of the latency
+// histogram buckets. The histogram's last bucket counts slower requests.
 var latencyBounds = [...]uint64{50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000}
 
 var statisticsLocation = time.FixedZone("Asia/Singapore", 8*60*60)
@@ -289,7 +325,7 @@ func dayStart(now time.Time) time.Time {
 	return time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, statisticsLocation)
 }
 
-func (m *Monitor) BeginRequest() {
+func (m *Metrics) BeginRequest() {
 	active := m.active.Add(1)
 	minute := m.now().Unix() / 60
 	m.mu.Lock()
@@ -301,7 +337,7 @@ func (m *Monitor) BeginRequest() {
 	m.mu.Unlock()
 }
 
-func (m *Monitor) EndRequest() {
+func (m *Metrics) EndRequest() {
 	// Include work that began before midnight in the following day's peak.
 	minute := m.now().Unix() / 60
 	m.mu.Lock()
@@ -314,7 +350,7 @@ func (m *Monitor) EndRequest() {
 	m.mu.Unlock()
 }
 
-func (m *Monitor) Record(endpoint string, status int, duration time.Duration, meta *RequestMeta) {
+func (m *Metrics) Record(endpoint string, status int, duration time.Duration, meta *RequestMeta) {
 	success := requestSucceeded(status, meta)
 	m.total.Add(1)
 	if success {
@@ -395,12 +431,18 @@ func (m *Monitor) Record(endpoint string, status int, duration time.Duration, me
 	m.mu.Unlock()
 }
 
-// A stream can fail after HTTP headers have been sent. Preserve its HTTP
-// status while using the terminal result for request success and error counts.
+// requestSucceeded reports whether a request counts as a success: a 2xx or 3xx
+// status and no terminal failure in meta.Outcome. A stream can fail after HTTP
+// headers have been sent. Preserve its HTTP status while using the terminal
+// result for request success and error counts. Without metadata, terminal
+// outcome is unknown and the request is conservatively counted as a failure.
 func requestSucceeded(status int, meta *RequestMeta) bool {
-	return status >= 200 && status < 400 && (meta == nil || meta.Outcome == "")
+	return status >= 200 && status < 400 && meta != nil && meta.Outcome == ""
 }
 
+// requestOutcome classifies a request that carries no explicit outcome. A
+// request without a channel, or with the "not_routed" default, never reached an
+// upstream.
 func requestOutcome(status int, channel string) string {
 	if channel == "" || channel == "not_routed" {
 		return "not_routed"
@@ -417,7 +459,8 @@ func requestOutcome(status int, channel string) string {
 	return "unknown"
 }
 
-func (m *Monitor) RecordAttempt(attempt UpstreamAttempt) {
+// RecordAttempt accounts one upstream attempt; a zero Time means now.
+func (m *Metrics) RecordAttempt(attempt UpstreamAttempt) {
 	if attempt.Time.IsZero() {
 		attempt.Time = m.now().UTC()
 	} else {
@@ -428,7 +471,7 @@ func (m *Monitor) RecordAttempt(attempt UpstreamAttempt) {
 	recordAttemptAggregate(&m.attemptLifetime, attempt)
 	bucket := &m.attemptBuckets[minute%int64(len(m.attemptBuckets))]
 	if bucket.minute != minute {
-		*bucket = attemptBucket{minute: minute, aggregate: newAttemptAggregate()}
+		*bucket = attemptBucket{minute: minute, aggregate: attemptAggregate()}
 	}
 	recordAttemptAggregate(&bucket.aggregate, attempt)
 	m.recentAttempts.PruneBefore(dayStart(attempt.Time))
@@ -436,6 +479,9 @@ func (m *Monitor) RecordAttempt(attempt UpstreamAttempt) {
 	m.mu.Unlock()
 }
 
+// MonitorSnapshot is the WebUI monitor view of Metrics. Lifetime covers the
+// time since start and Window the last hour, which Series breaks down per
+// minute; the per-endpoint, model, tier and status counts cover the last hour.
 type MonitorSnapshot struct {
 	Today         MetricSummary     `json:"today"`
 	TodaySeries   []MetricSeries    `json:"today_series"`
@@ -456,6 +502,9 @@ type MonitorSnapshot struct {
 	Upstream      UpstreamSnapshot  `json:"upstream"`
 }
 
+// MetricSummary counts requests by result. The latency fields are filled only
+// for the last hour, and each percentile is the upper bound of the histogram
+// bucket that holds it.
 type MetricSummary struct {
 	PeakConcurrency int64   `json:"peak_concurrency"`
 	Total           uint64  `json:"total"`
@@ -468,6 +517,7 @@ type MetricSummary struct {
 	P99MS           uint64  `json:"p99_ms,omitempty"`
 }
 
+// MetricSeries is one minute of the last-hour series.
 type MetricSeries struct {
 	Minute          time.Time `json:"minute"`
 	Total           uint64    `json:"total"`
@@ -483,16 +533,16 @@ type MetricSeries struct {
 
 // ServerKeyUsage returns per-server-key usage for the lifetime and the last
 // hour. The API key list polls it, so it skips building a full Snapshot.
-func (m *Monitor) ServerKeyUsage() (lifetime, window map[string]ServerKeyUsage) {
+func (m *Metrics) ServerKeyUsage() (lifetime, window map[string]ServerKeyUsage) {
 	return m.serverKeyUsageSince(m.now().Add(-59 * time.Minute))
 }
 
-func (m *Monitor) TodayServerKeyUsage() map[string]ServerKeyUsage {
+func (m *Metrics) TodayServerKeyUsage() map[string]ServerKeyUsage {
 	_, today := m.serverKeyUsageSince(dayStart(m.now()))
 	return today
 }
 
-func (m *Monitor) serverKeyUsageSince(since time.Time) (lifetime, window map[string]ServerKeyUsage) {
+func (m *Metrics) serverKeyUsageSince(since time.Time) (lifetime, window map[string]ServerKeyUsage) {
 	nowMinute := m.now().Unix() / 60
 	lifetime, window = make(map[string]ServerKeyUsage), make(map[string]ServerKeyUsage)
 	m.mu.Lock()
@@ -510,7 +560,7 @@ func (m *Monitor) serverKeyUsageSince(since time.Time) (lifetime, window map[str
 	return lifetime, window
 }
 
-func (m *Monitor) Snapshot() MonitorSnapshot {
+func (m *Metrics) Snapshot() MonitorSnapshot {
 	now := m.now()
 	hour := m.snapshotPeriod(now, 60)
 	today := m.snapshotPeriod(now, now.Unix()/60-dayStart(now).Unix()/60+1)
@@ -524,14 +574,14 @@ func (m *Monitor) Snapshot() MonitorSnapshot {
 	return hour
 }
 
-func (m *Monitor) snapshotPeriod(now time.Time, minutes int64) MonitorSnapshot {
+func (m *Metrics) snapshotPeriod(now time.Time, minutes int64) MonitorSnapshot {
 	nowMinute := now.Unix() / 60
 	window := MetricSummary{}
 	var histogram [11]uint64
 	endpoints, models, tiers, statuses := map[string]uint64{}, map[string]uint64{}, map[string]uint64{}, map[string]uint64{}
 	series := make([]MetricSeries, 0, minutes)
-	usageWindow := newUsagePeriod()
-	upstreamWindow := newAttemptAggregate()
+	usageWindow := usagePeriod()
+	upstreamWindow := attemptAggregate()
 	var recentRequests []UpstreamRequest
 	var recentAttempts []UpstreamAttempt
 	m.mu.Lock()
@@ -610,7 +660,8 @@ func mergeCounts(target, source map[string]uint64) {
 	}
 }
 
-func newUsagePeriod() UsagePeriod {
+// usagePeriod returns an empty UsagePeriod with its maps allocated.
+func usagePeriod() UsagePeriod {
 	return UsagePeriod{Models: make(map[string]TokenCounts), Tiers: make(map[string]TokenCounts), Sessions: make(map[string]TokenCounts), ServerKeys: make(map[string]ServerKeyUsage)}
 }
 
@@ -662,7 +713,10 @@ func mergeTokenMaps(target, source map[string]TokenCounts) {
 // short-lived and stay uncapped.
 const maxLifetimeSessions = 500
 
-func (m *Monitor) addLifetimeSessionLocked(session string, tokens TokenCounts) {
+// addLifetimeSessionLocked adds tokens to the lifetime total of session and
+// marks it as just seen, evicting the least recently seen session first when
+// the map is full. The caller holds m.mu.
+func (m *Metrics) addLifetimeSessionLocked(session string, tokens TokenCounts) {
 	if session == "" {
 		return
 	}
@@ -681,7 +735,7 @@ func (m *Monitor) addLifetimeSessionLocked(session string, tokens TokenCounts) {
 }
 
 func cloneUsagePeriod(source UsagePeriod) UsagePeriod {
-	result := newUsagePeriod()
+	result := usagePeriod()
 	result.Requests, result.Reported, result.Tokens = source.Requests, source.Reported, source.Tokens
 	mergeTokenMaps(result.Models, source.Models)
 	mergeTokenMaps(result.Tiers, source.Tiers)
@@ -698,7 +752,8 @@ func finalizeUsagePeriod(period *UsagePeriod) {
 	}
 }
 
-func newAttemptAggregate() AttemptAggregate {
+// attemptAggregate returns an empty AttemptAggregate with its maps allocated.
+func attemptAggregate() AttemptAggregate {
 	return AttemptAggregate{
 		Proxies: make(map[string]AttemptCounts),
 		Tiers:   make(map[string]AttemptCounts), Channels: make(map[string]AttemptCounts), Keys: make(map[string]AttemptCounts),
@@ -756,7 +811,7 @@ func mergeAttemptMaps(target, source map[string]AttemptCounts) {
 }
 
 func cloneAttemptAggregate(source AttemptAggregate) AttemptAggregate {
-	result := newAttemptAggregate()
+	result := attemptAggregate()
 	mergeAttemptAggregate(&result, source)
 	return result
 }
@@ -767,6 +822,8 @@ func finalizeAttemptAggregate(aggregate *AttemptAggregate) {
 	}
 }
 
+// histogramPercentile returns the upper bound of the bucket holding the given
+// percentile of total, or one past the last bound for the overflow bucket.
 func histogramPercentile(histogram [11]uint64, total uint64, percentile float64) uint64 {
 	target := uint64(float64(total)*percentile + 0.999)
 	var count uint64

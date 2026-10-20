@@ -116,11 +116,11 @@ func TestStickyRetryMigrationsStayBalanced(t *testing.T) {
 
 func TestKeyedStickySessionsBalanceProxiesRatherThanKeyCount(t *testing.T) {
 	transports := testAnonymousPool()
-	pool := &transportPool{strategy: "sticky_round_robin"}
+	pool := &proxyTransports{strategy: "sticky_round_robin"}
 	for _, node := range transports.nodes {
 		pool.items = append(pool.items, node.proxy)
 	}
-	keys, err := newNodePool([]string{"a", "b", "c", "d"}, pool, time.Second)
+	keys, err := nodePool([]string{"a", "b", "c", "d"}, pool, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestStickyRuntimeReloadAndRejectedSavePreserveAssignments(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	manager, err := NewRuntimeManager(ctx, path, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), telemetry.NewMonitor(), telemetry.NewLogHub(100), config.NewSecretRedactor(), new(slog.LevelVar))
+	manager, err := RuntimeManager(ctx, path, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), telemetry.Monitor(), telemetry.LogHub(100), config.SecretRedactor(), new(slog.LevelVar))
 	if err != nil {
 		t.Fatal(err)
 	}

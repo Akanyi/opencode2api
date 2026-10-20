@@ -8,7 +8,7 @@ import (
 )
 
 func TestTodayIncludesEarlierHoursAndExcludesPreviousDay(t *testing.T) {
-	m := NewMonitor()
+	m := Monitor()
 	now := time.Date(2026, 10, 17, 23, 59, 0, 0, statisticsLocation)
 	m.now = func() time.Time { return now }
 	meta := &RequestMeta{Request: "r", Model: "m", Tier: "zen", ServerKeyID: "key", UsageReported: true, Usage: protocol.Usage{Input: 10, Output: 20, Total: 30}}
@@ -40,7 +40,7 @@ func TestTodayIncludesEarlierHoursAndExcludesPreviousDay(t *testing.T) {
 }
 
 func TestDailyAggregationDoesNotDependOnRecentRing(t *testing.T) {
-	m := NewMonitor()
+	m := Monitor()
 	for range monitorRecentRequestCapacity + 1 {
 		m.Record("/v1/chat/completions", 200, time.Millisecond, &RequestMeta{Request: "r", Model: "m"})
 	}
@@ -51,7 +51,7 @@ func TestDailyAggregationDoesNotDependOnRecentRing(t *testing.T) {
 }
 
 func TestConcurrentPeakAcrossMidnight(t *testing.T) {
-	m := NewMonitor()
+	m := Monitor()
 	now := time.Date(2026, 10, 18, 23, 59, 0, 0, statisticsLocation)
 	m.now = func() time.Time { return now }
 	m.BeginRequest()

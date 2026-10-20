@@ -12,14 +12,14 @@ import (
 	"opencode2api/internal/config"
 )
 
-func testAnonymousPool() *anonymousPool {
-	transports := &transportPool{}
+func testAnonymousPool() *anonymousNodes {
+	transports := &proxyTransports{}
 	for i := range 3 {
 		p := &proxyTransport{index: i, name: fmt.Sprintf("http://proxy%d:80", i), active: new(atomic.Int64)}
 		p.healthy.Store(true)
 		transports.items = append(transports.items, p)
 	}
-	return newAnonymousPool(true, transports, time.Second)
+	return anonymousPool(true, transports, time.Second)
 }
 
 func TestAnonymousSchedulingAndCooldown(t *testing.T) {
@@ -56,6 +56,12 @@ func TestAnonymousSchedulingAndCooldown(t *testing.T) {
 }
 
 func TestProxyConnectionsRemainActiveUntilStreamCloses(t *testing.T) {
+	for _, lane := range []string{"regular", "bun"} {
+		t.Run(lane, func(t *testing.T) { testProxyStreamCounter(t, lane) })
+	}
+}
+
+func testProxyStreamCounter(t *testing.T, lane string) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -68,24 +74,30 @@ func TestProxyConnectionsRemainActiveUntilStreamCloses(t *testing.T) {
 	}))
 	defer server.Close()
 	defer close(release)
-	pool, err := newTransportPool([]string{"direct"}, config.PerformanceConfig{ConnectTimeoutSeconds: 1}, time.Second)
+	pool, err := transportPool([]string{"direct"}, config.PerformanceConfig{ConnectTimeoutSeconds: 1}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer pool.items[0].client.CloseIdleConnections()
+	defer pool.items[0].bun.CloseIdleConnections()
+	client := pool.items[0].client
+	if lane == "bun" {
+		client = pool.items[0].bun
+	}
 	request, _ := http.NewRequestWithContext(context.Background(), "GET", server.URL, nil)
-	resp, err := pool.items[0].client.Do(request)
+	resp, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pool.items[0].active.Load() != 1 {
 		t.Fatal("open SSE body must count as an active connection")
 	}
-	reloaded, err := newTransportPool([]string{"direct"}, config.PerformanceConfig{ConnectTimeoutSeconds: 1}, time.Second)
+	reloaded, err := transportPool([]string{"direct"}, config.PerformanceConfig{ConnectTimeoutSeconds: 1}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reloaded.items[0].client.CloseIdleConnections()
+	defer reloaded.items[0].bun.CloseIdleConnections()
 	reuseProxyConnectionCounters(pool, reloaded)
 	if reloaded.items[0].active.Load() != 1 {
 		t.Fatal("hot reload lost existing stream")

@@ -43,9 +43,9 @@ func proxyTestServer(t *testing.T) (*Server, string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Tests must not start background network probes.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	monitor := telemetry.NewMonitor()
-	hub := telemetry.NewLogHub(100)
-	manager, err := gateway.NewRuntimeManager(ctx, path, cfg, logger, monitor, hub, config.NewSecretRedactor(), new(slog.LevelVar))
+	monitor := telemetry.Monitor()
+	hub := telemetry.LogHub(100)
+	manager, err := gateway.RuntimeManager(ctx, path, cfg, logger, monitor, hub, config.SecretRedactor(), new(slog.LevelVar))
 	if err != nil {
 		t.Fatal(err)
 	}
