@@ -24,7 +24,7 @@ See the [management console guide (Chinese)](docs/management.zh-CN.md) for the n
 
 ## Quick start
 
-Download a binary from [GitHub Releases](https://github.com/jasonxu114514/opencode2api/releases), or build with **Go 1.24 or newer**:
+Download a binary from [GitHub Releases](https://github.com/jasonxu114514/opencode2api/releases), or build with **Go 1.27.3 or newer**:
 
 ```bash
 git clone https://github.com/jasonxu114514/opencode2api.git
@@ -502,7 +502,7 @@ Node.js is only needed for the WebUI JavaScript syntax check:
 for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-`.editorconfig`, `.gitattributes`, and Go formatting standardize the source. CI runs `go vet` and builds with Go 1.24 and stable Go on Linux/Windows, plus Go formatting, WebUI syntax, and entrypoint shell syntax checks. Release archives include all three READMEs.
+`.editorconfig`, `.gitattributes`, and Go formatting standardize the source. CI runs `go vet`, tests, and builds with Go 1.27.3 and stable Go on Linux/Windows, plus Go formatting, WebUI syntax, and entrypoint shell syntax checks. Release archives include all three READMEs.
 
 ## Troubleshooting
 

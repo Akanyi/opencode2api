@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        go: ["1.24.x", stable]
+        go: ["1.27.3", stable]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -30,6 +30,8 @@ jobs:
           cache: true
       - name: Vet
         run: go vet ./...
+      - name: Test
+        run: go test -count=1 ./...
       - name: Build
         run: go build -trimpath ./cmd/opencode2api
 

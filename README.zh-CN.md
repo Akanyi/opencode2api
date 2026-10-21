@@ -24,7 +24,7 @@ WebUI 内嵌在可执行文件中，运行服务无需 Node.js 或数据库。
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/jasonxu114514/opencode2api/releases) 下载可执行文件，或使用 **Go 1.24 及以上版本**编译：
+从 [GitHub Releases](https://github.com/jasonxu114514/opencode2api/releases) 下载可执行文件，或使用 **Go 1.27.3 及以上版本**编译：
 
 ```bash
 git clone https://github.com/jasonxu114514/opencode2api.git
@@ -497,7 +497,7 @@ Node.js 仅用于 WebUI 的 JavaScript 语法检查：
 for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.24 与稳定版 Go 的 `go vet` 和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英越三份 README。
+项目通过 `.editorconfig`、`.gitattributes` 和 Go 格式化统一格式。CI 覆盖 Linux / Windows 上的 Go 1.27.3 与稳定版 Go 的 `go vet`、测试和构建，以及 Go 格式、WebUI 语法和容器入口脚本语法检查。发布压缩包包含中英越三份 README。
 
 ## 常见问题
 

@@ -26,7 +26,7 @@ Xem [hướng dẫn bảng điều khiển quản trị (tiếng Trung)](docs/ma
 
 ## Bắt đầu nhanh
 
-Tải file nhị phân từ [GitHub Releases](https://github.com/jasonxu114514/opencode2api/releases), hoặc build với **Go 1.24 trở lên**:
+Tải file nhị phân từ [GitHub Releases](https://github.com/jasonxu114514/opencode2api/releases), hoặc build với **Go 1.27.3 trở lên**:
 
 ```bash
 git clone https://github.com/jasonxu114514/opencode2api.git
@@ -492,7 +492,7 @@ Node.js chỉ cần cho bước kiểm tra cú pháp JavaScript của WebUI:
 for f in webui/js/*.js webui/js/pages/*.js; do node --input-type=module --check < "$f"; done
 ```
 
-`.editorconfig`, `.gitattributes` và định dạng Go chuẩn hoá mã nguồn. CI chạy `go vet` và build với Go 1.24 và Go ở bản ổn định trên Linux/Windows, đồng thời kiểm tra định dạng Go, cú pháp WebUI và cú pháp shell của entrypoint. Gói phát hành gồm cả ba README.
+`.editorconfig`, `.gitattributes` và định dạng Go chuẩn hoá mã nguồn. CI chạy `go vet`, kiểm thử và build với Go 1.27.3 và Go ở bản ổn định trên Linux/Windows, đồng thời kiểm tra định dạng Go, cú pháp WebUI và cú pháp shell của entrypoint. Gói phát hành gồm cả ba README.
 
 ## Khắc phục sự cố
 
